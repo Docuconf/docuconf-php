@@ -1,0 +1,255 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Docuconf\Tests;
+
+use Docuconf\Declaration;
+use Docuconf\Env;
+use Docuconf\Loader;
+use Docuconf\Tests\Fixtures\Route;
+use Docuconf\Tests\Fixtures\Routes;
+use Docuconf\Tests\Support\Certs;
+use Docuconf\Violation;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * File inputs with real files under a DOCUCONF_FILE_ROOT, and certificates
+ * generated for each test.
+ */
+final class FilesTest extends TestCase
+{
+    private string $root;
+
+    protected function setUp(): void
+    {
+        $this->root = sys_get_temp_dir() . '/docuconf-files-' . bin2hex(random_bytes(6));
+        mkdir($this->root, 0o777, true);
+    }
+
+    protected function tearDown(): void
+    {
+        exec('rm -rf ' . escapeshellarg($this->root));
+    }
+
+    private function put(string $path, string $content): void
+    {
+        @mkdir(dirname($this->root . $path), 0o777, true);
+        file_put_contents($this->root . $path, $content);
+    }
+
+    /**
+     * @param array<string, string> $extra
+     * @return array<string, string>
+     */
+    private function env(array $extra = []): array
+    {
+        return ['DOCUCONF_FILE_ROOT' => $this->root] + $extra;
+    }
+
+    /**
+     * @param array<string, string> $env
+     * @return list<array{string, string}>
+     */
+    private function codes(Declaration $d, array $env = [], ?int $now = null): array
+    {
+        $result = Loader::load($d->spec(), $this->env($env), $now);
+        return array_map(fn (Violation $v) => [$v->input, $v->code], $result->violations);
+    }
+
+    private function tls(?callable $configure = null): Declaration
+    {
+        $d = Env::declare('svc');
+        $f = $d->tls('serving-tls', '/etc/svc/tls')->required()->describe('Serving certificate');
+        if ($configure !== null) {
+            $configure($f);
+        }
+        return $d;
+    }
+
+    public function testValidTlsWithCa(): void
+    {
+        $ca = Certs::ca();
+        [$cert, $key] = Certs::issue(['svc.internal', 'api.example.com'], 365, 'RSA', $ca);
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $key, $ca[0]);
+        $d = $this->tls(fn ($f) => $f->dnsNames('svc.internal', 'api.example.com')->keyAlgorithms('RSA')->minRemaining('720h')->requireCA());
+        self::assertSame([], $this->codes($d));
+        $values = $d->load($this->env());
+        self::assertSame($this->root . '/etc/svc/tls/tls.crt', $values->file('serving-tls')?->file('tls.crt'));
+    }
+
+    public function testCaMismatch(): void
+    {
+        [$cert, $key] = Certs::issue(['svc.internal'], 365, 'RSA', Certs::ca('one'));
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $key, Certs::ca('two')[0]);
+        self::assertSame([['serving-tls', 'certificate_invalid']], $this->codes($this->tls(fn ($f) => $f->requireCA())));
+    }
+
+    public function testExpiring(): void
+    {
+        [$cert, $key] = Certs::issue(['svc.internal'], 10);
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $key);
+        self::assertSame([['serving-tls', 'certificate_expiring']], $this->codes($this->tls(fn ($f) => $f->minRemaining('720h'))));
+    }
+
+    public function testExpired(): void
+    {
+        [$cert, $key] = Certs::issue(['svc.internal'], 1);
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $key);
+        self::assertSame([['serving-tls', 'certificate_invalid']], $this->codes($this->tls(), [], time() + 3 * 86400));
+    }
+
+    public function testDnsMismatchAndWildcards(): void
+    {
+        [$cert, $key] = Certs::issue(['*.example.com']);
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $key);
+        self::assertSame([], $this->codes($this->tls(fn ($f) => $f->dnsNames('api.example.com'))));
+        self::assertSame(
+            [['serving-tls', 'certificate_name_mismatch']],
+            $this->codes($this->tls(fn ($f) => $f->dnsNames('a.b.example.com'))),
+            'a wildcard covers one label only',
+        );
+        self::assertSame([['serving-tls', 'certificate_name_mismatch']], $this->codes($this->tls(fn ($f) => $f->dnsNames('example.org'))));
+    }
+
+    public function testKeyMismatch(): void
+    {
+        [$cert] = Certs::issue(['svc.internal']);
+        [, $otherKey] = Certs::issue(['svc.internal']);
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $otherKey);
+        self::assertSame([['serving-tls', 'key_mismatch']], $this->codes($this->tls()));
+    }
+
+    public function testKeyAlgorithm(): void
+    {
+        [$cert, $key] = Certs::issue(['svc.internal'], 365, 'ECDSA');
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', $cert, $key);
+        self::assertSame([], $this->codes($this->tls(fn ($f) => $f->keyAlgorithms('ECDSA'))));
+        self::assertSame([['serving-tls', 'certificate_invalid']], $this->codes($this->tls(fn ($f) => $f->keyAlgorithms('RSA'))));
+    }
+
+    public function testMalformedCertificate(): void
+    {
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', 'not a certificate', 'not a key');
+        self::assertSame([['serving-tls', 'certificate_invalid']], $this->codes($this->tls()));
+    }
+
+    public function testMissingRequiredFileAndOptionalAbsent(): void
+    {
+        $d = $this->tls();
+        $d->text('license', '/etc/svc/license/key.txt')->describe('Licence key');
+        self::assertSame([['serving-tls', 'file_missing']], $this->codes($d));
+    }
+
+    private function routes(string $format = 'yaml'): Declaration
+    {
+        $d = Env::declare('svc');
+        $d->configFile('routes', "/etc/svc/routes/routes.$format", $format)->schema(Routes::class)->required()->pathEnv('ROUTES_FILE')->describe('Routing table');
+        return $d;
+    }
+
+    public function testConfigFileBindsToTheAppType(): void
+    {
+        $this->put('/etc/svc/routes/routes.yaml', "routes:\n  - match: /api\n    upstream: https://api.internal\n    timeout: 5s\n");
+        $routes = $this->routes()->load($this->env())->file('routes')?->value;
+        self::assertInstanceOf(Routes::class, $routes);
+        self::assertInstanceOf(Route::class, $routes->routes[0]);
+        self::assertSame('/api', $routes->routes[0]->match);
+        self::assertSame('5s', (string) $routes->routes[0]->timeout);
+    }
+
+    public function testMalformedConfig(): void
+    {
+        $this->put('/etc/svc/routes/routes.yaml', "routes: [unclosed\n");
+        self::assertSame([['routes', 'file_malformed']], $this->codes($this->routes()));
+    }
+
+    public function testSchemaViolation(): void
+    {
+        $this->put('/etc/svc/routes/routes.yaml', "routes:\n  - match: api\n    upstream: https://api.internal\n");
+        self::assertSame([['routes', 'schema_mismatch']], $this->codes($this->routes()));
+        $this->put('/etc/svc/routes/routes.yaml', "routes: []\n");
+        self::assertSame([['routes', 'schema_mismatch']], $this->codes($this->routes()));
+        $this->put('/etc/svc/routes/routes.yaml', "routes:\n  - {match: /, upstream: http://x, extra: 1}\n");
+        self::assertSame([['routes', 'schema_mismatch']], $this->codes($this->routes()));
+    }
+
+    public function testJsonAndTomlConfig(): void
+    {
+        $this->put('/etc/svc/routes/routes.json', '{"routes":[{"match":"/","upstream":"http://x"}]}');
+        self::assertSame([], $this->codes($this->routes('json')));
+        $this->put('/etc/svc/routes/routes.toml', "[[routes]]\nmatch = \"/\"\nupstream = \"http://x\"\n");
+        self::assertSame([], $this->codes($this->routes('toml')));
+        $this->put('/etc/svc/routes/routes.toml', "[[routes]\n");
+        self::assertSame([['routes', 'file_malformed']], $this->codes($this->routes('toml')));
+    }
+
+    public function testPathEnvUnderTheFileRoot(): void
+    {
+        $this->put('/mnt/elsewhere/r.yaml', "routes:\n  - {match: /, upstream: http://x}\n");
+        $loaded = $this->routes()->load($this->env(['ROUTES_FILE' => '/mnt/elsewhere/r.yaml']))->file('routes');
+        self::assertSame($this->root . '/mnt/elsewhere/r.yaml', $loaded?->path);
+    }
+
+    public function testFileTooLargeAndUnreadable(): void
+    {
+        $d = Env::declare('svc');
+        $d->binary('geoip', '/data/geoip/db.mmdb')->required()->maxSize(4)->describe('GeoIP database');
+        $this->put('/data/geoip/db.mmdb', '12345');
+        self::assertSame([['geoip', 'file_too_large']], $this->codes($d));
+        unlink($this->root . '/data/geoip/db.mmdb');
+        mkdir($this->root . '/data/geoip/db.mmdb');
+        self::assertSame([['geoip', 'file_unreadable']], $this->codes($d));
+    }
+
+    public function testCaBundle(): void
+    {
+        $d = Env::declare('svc');
+        $d->caBundle('upstream-ca', '/etc/svc/ca/bundle.pem')->required()->minCertificates(2)->describe('Upstream CAs');
+        $this->put('/etc/svc/ca/bundle.pem', Certs::ca('a')[0]);
+        self::assertSame([['upstream-ca', 'file_malformed']], $this->codes($d));
+        $this->put('/etc/svc/ca/bundle.pem', Certs::ca('a')[0] . Certs::ca('b')[0]);
+        self::assertSame([], $this->codes($d));
+    }
+
+    private function keystore(string $format): Declaration
+    {
+        $d = Env::declare('svc');
+        $d->ifPresent('KEYSTORE_PASSWORD')->secret()->describe('Keystore password');
+        $d->keystore('partner', "/etc/svc/partner/store.$format", $format)->required()->passwordVar('KEYSTORE_PASSWORD')->describe('Partner keystore');
+        return $d;
+    }
+
+    public function testPkcs12Keystore(): void
+    {
+        $this->put('/etc/svc/partner/store.pkcs12', Certs::pkcs12('changeit'));
+        self::assertSame([], $this->codes($this->keystore('pkcs12'), ['KEYSTORE_PASSWORD' => 'changeit']));
+        self::assertSame([['partner', 'keystore_unreadable']], $this->codes($this->keystore('pkcs12'), ['KEYSTORE_PASSWORD' => 'wrong']));
+    }
+
+    public function testJksIntegrity(): void
+    {
+        $this->put('/etc/svc/partner/store.jks', Certs::jks('changeit'));
+        self::assertSame([], $this->codes($this->keystore('jks'), ['KEYSTORE_PASSWORD' => 'changeit']));
+        self::assertSame([['partner', 'keystore_unreadable']], $this->codes($this->keystore('jks'), ['KEYSTORE_PASSWORD' => 'wrong']));
+        self::assertSame([['partner', 'keystore_unreadable']], $this->codes($this->keystore('jks')), 'unset password is empty');
+    }
+
+    public function testTextFile(): void
+    {
+        $d = Env::declare('svc');
+        $d->text('license', '/etc/svc/license/key.txt')->required()->pattern('^[A-Z0-9]{5}(-[A-Z0-9]{5}){3}\n?$')->describe('Licence key');
+        $this->put('/etc/svc/license/key.txt', "ABCDE-12345-FGHIJ-67890\n");
+        self::assertSame([], $this->codes($d));
+        self::assertSame("ABCDE-12345-FGHIJ-67890\n", $d->load($this->env())->file('license')?->value);
+        $this->put('/etc/svc/license/key.txt', "abcde\n");
+        self::assertSame([['license', 'pattern_mismatch']], $this->codes($d));
+    }
+
+    public function testFileAndVarViolationsTogether(): void
+    {
+        $d = $this->routes();
+        $d->required('DATABASE_URL')->isUrl()->secret()->describe('Database URL');
+        self::assertSame([['DATABASE_URL', 'missing_required'], ['routes', 'file_missing']], $this->codes($d));
+    }
+}

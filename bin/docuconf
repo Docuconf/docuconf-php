@@ -1,0 +1,17 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// docuconf command line: export a declaration as contract.cue, or check the
+// environment against it. A declaration file is a PHP file that returns a
+// Docuconf\Declaration (see README).
+
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+
+exit(Docuconf\Cli::main($argv, STDOUT, STDERR));

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<ruleset name="docuconf">
+    <description>PSR-12, with long lines allowed in messages and docs.</description>
+    <file>src</file>
+    <file>tests</file>
+    <file>bin/docuconf</file>
+    <arg name="extensions" value="php"/>
+    <arg name="colors"/>
+    <arg value="sp"/>
+    <rule ref="PSR12">
+        <exclude name="Generic.Files.LineLength"/>
+    </rule>
+</ruleset>
