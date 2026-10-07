@@ -207,6 +207,10 @@ final class VarBuilder
         return $this;
     }
 
+    /**
+     * The most characters (Unicode code points) a string, url or json value
+     * may hold. A json value is measured as received, before it is parsed.
+     */
     public function maxLength(int $n): self
     {
         $this->spec->maxLength = $n;
@@ -266,6 +270,26 @@ final class VarBuilder
     {
         $this->spec->itemMin = $min;
         $this->spec->itemMax = $max;
+        return $this;
+    }
+
+    /**
+     * The fewest characters (Unicode code points) each item of a string list
+     * may hold, measured after the list is split.
+     */
+    public function itemMinLength(int $n): self
+    {
+        $this->spec->itemMinLength = $n;
+        return $this;
+    }
+
+    /**
+     * The most characters (Unicode code points) each item of a string list
+     * may hold, measured after the list is split.
+     */
+    public function itemMaxLength(int $n): self
+    {
+        $this->spec->itemMaxLength = $n;
         return $this;
     }
 
