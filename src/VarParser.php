@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Docuconf;
 
+use Docuconf\Export\Exporter;
 use Docuconf\Schema\Hydrator;
+use Docuconf\Schema\Json;
 use Docuconf\Schema\HydrationError;
 use Docuconf\Schema\JsonSchema;
 use Docuconf\Spec\VarSpec;
@@ -257,6 +259,10 @@ final class VarParser
                         return ['invalid_scheme', "scheme must be one of: $allowed$shown"];
                     }
                 }
+                $len = mb_strlen($value, 'UTF-8');
+                if ($spec->maxLength !== null && $len > $spec->maxLength) {
+                    return ['out_of_range', "is longer than maxLength {$spec->maxLength} ($len characters)"];
+                }
                 return null;
             case 'enum':
                 if (!is_string($value) || !in_array($value, $spec->values ?? [], true)) {
@@ -277,6 +283,17 @@ final class VarParser
                     if ($spec->itemMax !== null && $item > $spec->itemMax) {
                         return ['out_of_range', "has an item above itemMax {$spec->itemMax}" . ($spec->secret ? '' : " ($item)")];
                     }
+                    if (is_string($item) && ($spec->itemMinLength !== null || $spec->itemMaxLength !== null)) {
+                        // Characters (code points) of the item after splitting.
+                        $len = mb_strlen($item, 'UTF-8');
+                        $shown = $spec->secret ? '' : ' ' . self::show($item);
+                        if ($spec->itemMinLength !== null && $len < $spec->itemMinLength) {
+                            return ['out_of_range', "has an item$shown shorter than itemMinLength {$spec->itemMinLength} ($len characters)"];
+                        }
+                        if ($spec->itemMaxLength !== null && $len > $spec->itemMaxLength) {
+                            return ['out_of_range', "has an item$shown longer than itemMaxLength {$spec->itemMaxLength} ($len characters)"];
+                        }
+                    }
                 }
                 $n = count($value);
                 if ($spec->minItems !== null && $n < $spec->minItems) {
@@ -287,6 +304,16 @@ final class VarParser
                 }
                 return null;
             case 'json':
+                if ($spec->maxLength !== null) {
+                    // The wire string as received, before parsing; a value
+                    // with no wire form (a default) as the compact JSON the
+                    // platform renders.
+                    $wire = is_string($raw) ? $raw : Json::encode(Exporter::plain($value));
+                    $len = mb_strlen($wire, 'UTF-8');
+                    if ($len > $spec->maxLength) {
+                        return ['out_of_range', "is longer than maxLength {$spec->maxLength} ($len characters of JSON)"];
+                    }
+                }
                 if ($spec->schema !== null) {
                     $error = JsonSchema::validate($spec->schema, $value, is_string($raw) ? $raw : null);
                     if ($error !== null) {

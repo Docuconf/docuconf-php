@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Docuconf\Tests;
 
 use Docuconf\ConfigurationError;
+use Docuconf\Contract;
 use Docuconf\Declaration;
 use Docuconf\DeclarationError;
 use Docuconf\Duration;
 use Docuconf\Env;
 use Docuconf\Tests\Fixtures\RateLimits;
+use Docuconf\Tests\Support\CueVet;
 use PHPUnit\Framework\TestCase;
 
 final class DeclarationTest extends TestCase
@@ -139,6 +141,99 @@ final class DeclarationTest extends TestCase
         self::assertMatchesRegularExpression('/itemMin: +0\n/', $env->export());
     }
 
+    /** SPEC §4.3: maxLength on url and json, item lengths on string lists, in code points. */
+    private static function lengths(): Declaration
+    {
+        $env = Env::declare('lengths');
+        $env->ifPresent('CALLBACK')->isUrl('https')->maxLength(24)->describe('Where to report each run');
+        $env->ifPresent('LIMITS')->isJson()->maxLength(16)->describe('Run limits as a JSON object');
+        $env->ifPresent('BRANCHES')->isList()->itemMinLength(2)->itemMaxLength(4)->describe('Branch codes');
+        $env->ifPresent('BRANCHES_JSON')->isList('string', 'json')->itemMaxLength(4)->describe('Branch codes as JSON');
+        $env->ifPresent('BRANCHES_IDX')->isList('string', 'indexed')->itemMaxLength(4)->describe('Branch codes, one per variable');
+        $env->ifPresent('DB_URL')->isUrl()->secret()->maxLength(30)->describe('Database connection string');
+        $env->ifPresent('NAME')->maxLength(2)->describe('Display name');
+        return $env;
+    }
+
+    public function testLengthsCountCodePointsNotBytes(): void
+    {
+        $values = self::lengths()->load([
+            'CALLBACK' => 'https://例え.jp/日本語の道/一二三四',
+            'LIMITS' => '{"n":"日本語の道路xy"}',
+            'BRANCHES' => 'ZÜ01,日本,😀😀',
+            'BRANCHES_JSON' => '["😀😀😀😀"]',
+            'NAME' => '日本',
+        ]);
+        self::assertSame(['ZÜ01', '日本', '😀😀'], $values->list('BRANCHES'));
+        self::assertSame(['n' => '日本語の道路xy'], $values->json('LIMITS'));
+        self::assertSame([['var' => 'NAME', 'code' => 'out_of_range']], self::loadError(self::lengths(), ['NAME' => '日本語'])->codes());
+    }
+
+    /** @return iterable<string, array{array<string, string>, string}> */
+    public static function tooLong(): iterable
+    {
+        yield 'url above maxLength' => [['CALLBACK' => 'https://a.example/runs/42'], 'CALLBACK'];
+        yield 'url above maxLength in characters' => [['CALLBACK' => 'https://例え.jp/日本語の道/一二三四五'], 'CALLBACK'];
+        yield 'json above maxLength' => [['LIMITS' => '{"max":123456789}'], 'LIMITS'];
+        yield 'json whitespace counts' => [['LIMITS' => '{ "max": 123456 }'], 'LIMITS'];
+        yield 'item above itemMaxLength' => [['BRANCHES' => 'BE,ZÜRICH'], 'BRANCHES'];
+        yield 'item below itemMinLength' => [['BRANCHES' => 'BE,B'], 'BRANCHES'];
+        yield 'json list item' => [['BRANCHES_JSON' => '["BE","GENEVA"]'], 'BRANCHES_JSON'];
+        yield 'indexed list item' => [['BRANCHES_IDX__0' => 'BE', 'BRANCHES_IDX__1' => 'GENEVA'], 'BRANCHES_IDX'];
+    }
+
+    /** @param array<string, string> $env */
+    #[\PHPUnit\Framework\Attributes\DataProvider('tooLong')]
+    public function testLengthLimitsAreOutOfRange(array $env, string $var): void
+    {
+        self::assertSame([['var' => $var, 'code' => 'out_of_range']], self::loadError(self::lengths(), $env)->codes());
+    }
+
+    public function testTooLongSecretReportsItsLengthOnly(): void
+    {
+        $e = self::loadError(self::lengths(), ['DB_URL' => 'postgres://app:s3cr3t@db:5432/app']);
+        self::assertSame([['var' => 'DB_URL', 'code' => 'out_of_range']], $e->codes());
+        self::assertStringContainsString('33 characters', $e->getMessage());
+        self::assertStringNotContainsString('s3cr3t', $e->getMessage());
+    }
+
+    public function testLengthLimitsAreExported(): void
+    {
+        $cue = self::lengths()->export();
+        self::assertMatchesRegularExpression('/CALLBACK: \{[^}]*maxLength: +24\n/s', $cue);
+        self::assertMatchesRegularExpression('/LIMITS: \{[^}]*maxLength: +16\n/s', $cue);
+        self::assertMatchesRegularExpression('/itemMinLength: +2\n\s*itemMaxLength: +4\n/', $cue);
+        CueVet::vet($cue);
+    }
+
+    public function testLengthLimitsInContractFirstMode(): void
+    {
+        $contract = Contract::fromJson([
+            'apiVersion' => 'docuconf.dev/v1alpha1',
+            'kind' => 'ConfigContract',
+            'metadata' => ['name' => 'lengths'],
+            'vars' => [
+                'LIMITS' => ['type' => 'json', 'description' => 'Run limits', 'maxLength' => 16],
+                'CODES' => ['type' => 'list', 'description' => 'Branch codes', 'items' => 'string', 'itemMinLength' => 2, 'itemMaxLength' => 4],
+            ],
+        ]);
+        self::assertSame(['ZÜ01'], $contract->load(['CODES' => 'ZÜ01'])->list('CODES'));
+        try {
+            $contract->load(['LIMITS' => '{ "max": 123456 }', 'CODES' => 'B']);
+            self::fail('expected a ConfigurationError');
+        } catch (ConfigurationError $e) {
+            self::assertSame([['var' => 'LIMITS', 'code' => 'out_of_range'], ['var' => 'CODES', 'code' => 'out_of_range']], $e->codes());
+        }
+        $this->expectException(DeclarationError::class);
+        $this->expectExceptionMessage('only apply to a list of string items');
+        Contract::fromJson([
+            'apiVersion' => 'docuconf.dev/v1alpha1',
+            'kind' => 'ConfigContract',
+            'metadata' => ['name' => 'lengths'],
+            'vars' => ['N' => ['type' => 'list', 'description' => 'Some ints', 'items' => 'int', 'itemMaxLength' => 4]],
+        ]);
+    }
+
     /** @return iterable<string, array{callable(Declaration): mixed, string}> */
     public static function badDeclarations(): iterable
     {
@@ -151,6 +246,13 @@ final class DeclarationTest extends TestCase
         yield 'lookahead' => [fn (Declaration $d) => $d->ifPresent('CODE')->pattern('^(?=a)')->describe('Some code'), 'lookahead is not RE2'];
         yield 'backreference' => [fn (Declaration $d) => $d->ifPresent('CODE')->pattern('(a)\1')->describe('Some code'), 'backreferences are not RE2'];
         yield 'itemMin on strings' => [fn (Declaration $d) => $d->ifPresent('L')->isList()->itemsBetween(0, 1)->describe('Some list'), 'only apply to a list of int'];
+        yield 'itemMinLength on ints' => [fn (Declaration $d) => $d->ifPresent('L')->isList('int')->itemMaxLength(3)->describe('Some list'), 'only apply to a list of string'];
+        yield 'itemMinLength above itemMaxLength' => [fn (Declaration $d) => $d->ifPresent('L')->isList()->itemMinLength(5)->itemMaxLength(4)->describe('Some list'), 'itemMinLength is greater than itemMaxLength'];
+        yield 'maxLength on an int' => [fn (Declaration $d) => $d->ifPresent('N')->isInteger()->maxLength(3)->describe('Some count'), 'maxLength does not apply to an int variable'];
+        yield 'item default too long' => [fn (Declaration $d) => $d->ifPresent('L')->isList()->itemMaxLength(2)->default(['ok', 'ZÜ01'])->describe('Some list'), 'default does not satisfy'];
+        yield 'url default too long' => [fn (Declaration $d) => $d->ifPresent('U')->isUrl()->maxLength(10)->default('https://example.com')->describe('Some endpoint'), 'default does not satisfy'];
+        // {"n":"日本語の道路"} is 14 characters as compact JSON.
+        yield 'json default too long' => [fn (Declaration $d) => $d->ifPresent('J')->isJson()->maxLength(13)->default(['n' => '日本語の道路'])->describe('Some limits'), 'default does not satisfy'];
         yield 'bad duration default' => [fn (Declaration $d) => $d->ifPresent('T')->isDuration()->default('soon')->describe('A timeout'), 'not a Go duration'];
         yield 'bad iso8601 default' => [fn (Declaration $d) => $d->ifPresent('T')->isDuration('iso8601')->default('soon')->describe('A timeout'), 'write it as in the env (iso8601, such as PT30S) or in Go form (30s)'];
         yield 'an int' => [fn (Declaration $d) => $d->ifPresent('N')->isInteger()->minLength(1)->describe('A number'), 'minLength does not apply to an int variable'];

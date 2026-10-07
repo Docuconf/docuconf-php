@@ -90,6 +90,7 @@ final class Exporter
                 break;
             case 'url':
                 self::put($o, 'schemes', $v->schemes);
+                self::put($o, 'maxLength', $v->maxLength);
                 break;
             case 'enum':
                 $o['values'] = $v->values ?? [];
@@ -104,8 +105,11 @@ final class Exporter
                 self::put($o, 'maxItems', $v->maxItems);
                 self::put($o, 'itemMin', $v->itemMin);
                 self::put($o, 'itemMax', $v->itemMax);
+                self::put($o, 'itemMinLength', $v->itemMinLength);
+                self::put($o, 'itemMaxLength', $v->itemMaxLength);
                 break;
             case 'json':
+                self::put($o, 'maxLength', $v->maxLength);
                 self::put($o, 'schema', $v->schema);
                 break;
         }

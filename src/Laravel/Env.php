@@ -159,9 +159,15 @@ final class Env
         array $schemes = [],
         bool $secret = false,
         ?string $group = null,
+        ?int $maxLength = null,
     ): ?string {
         /** @var ?string */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, fn (VarBuilder $v) => $v->isUrl(...$schemes));
+        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($schemes, $maxLength) {
+            $v->isUrl(...$schemes);
+            if ($maxLength !== null) {
+                $v->maxLength($maxLength);
+            }
+        });
     }
 
     /**
@@ -198,9 +204,11 @@ final class Env
         ?int $itemMin = null,
         ?int $itemMax = null,
         ?string $group = null,
+        ?int $itemMinLength = null,
+        ?int $itemMaxLength = null,
     ): ?array {
         /** @var list<string|int>|null */
-        return self::declareVar($name, $description, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax) {
+        return self::declareVar($name, $description, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax, $itemMinLength, $itemMaxLength) {
             $v->isList($items, $encoding, $separator);
             if ($minItems !== null) {
                 $v->minItems($minItems);
@@ -210,6 +218,12 @@ final class Env
             }
             if ($itemMin !== null || $itemMax !== null) {
                 $v->itemsBetween($itemMin, $itemMax);
+            }
+            if ($itemMinLength !== null) {
+                $v->itemMinLength($itemMinLength);
+            }
+            if ($itemMaxLength !== null) {
+                $v->itemMaxLength($itemMaxLength);
             }
         });
     }
@@ -228,8 +242,14 @@ final class Env
         bool $required = false,
         bool $secret = false,
         ?string $group = null,
+        ?int $maxLength = null,
     ): mixed {
-        return self::declareVar($name, $description, $required, $secret, $group, $default, fn (VarBuilder $v) => $v->isJson($schema));
+        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($schema, $maxLength) {
+            $v->isJson($schema);
+            if ($maxLength !== null) {
+                $v->maxLength($maxLength);
+            }
+        });
     }
 
     /**

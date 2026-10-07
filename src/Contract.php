@@ -152,7 +152,7 @@ final class Contract
     private const VAR_KEYS = [
         ...self::VAR_COMMON,
         'minLength', 'maxLength', 'pattern', 'min', 'max', 'encoding', 'schemes', 'values',
-        'items', 'separator', 'minItems', 'maxItems', 'itemMin', 'itemMax', 'schema',
+        'items', 'separator', 'minItems', 'maxItems', 'itemMin', 'itemMax', 'itemMinLength', 'itemMaxLength', 'schema',
     ];
 
     private const FILE_KEYS = [
@@ -239,6 +239,8 @@ final class Contract
         $s->maxItems = self::int($v, 'maxItems');
         $s->itemMin = self::int($v, 'itemMin');
         $s->itemMax = self::int($v, 'itemMax');
+        $s->itemMinLength = self::int($v, 'itemMinLength');
+        $s->itemMaxLength = self::int($v, 'itemMaxLength');
         if (array_key_exists('schema', $v)) {
             $s->schema = match (true) {
                 is_array($v['schema']) => $v['schema'],
