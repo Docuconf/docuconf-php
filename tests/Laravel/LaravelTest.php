@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Docuconf\Tests\Laravel;
 
 use Docuconf\ConfigurationError;
+use Docuconf\Console;
 use Docuconf\Declaration;
+use Docuconf\DeclarationError;
 use Docuconf\Duration;
 use Docuconf\Laravel\DocuconfServiceProvider;
 use Docuconf\Laravel\Env;
+use Docuconf\Laravel\StaleConfigCache;
 use Docuconf\Values;
 use Orchestra\Testbench\TestCase;
 
@@ -19,26 +22,51 @@ final class LaravelTest extends TestCase
     private static ?int $exitCode = null;
     /** @var list<string> */
     private array $argv = [];
+    /** @var resource */
+    private $stderr;
+    /** The app environment; "testing" skips the boot check, as in an app's own tests. */
+    private string $appEnv = 'production';
+    /** @var array<string, string>|null fingerprints a config cache was built with */
+    private ?array $cachedFingerprints = null;
+    private ?string $configCache = null;
+    private ?string $envPath = null;
 
     protected function setUp(): void
     {
         $this->argv = $_SERVER['argv'] ?? [];
+        $_SERVER['argv'] = ['artisan', 'serve'];
         self::$exitCode = null;
-        DocuconfServiceProvider::$exitUsing = function (int $code): void {
+        $stderr = fopen('php://memory', 'w+');
+        self::assertIsResource($stderr);
+        $this->stderr = $stderr;
+        Console::$stderr = $stderr;
+        Console::$exitUsing = function (int $code): void {
             self::$exitCode = $code;
         };
+        putenv('ORDERS_DATABASE_URL=postgres://db/orders');
         parent::setUp();
     }
 
     protected function tearDown(): void
     {
         parent::tearDown();
-        foreach (self::VARS as $name) {
+        foreach ([...self::VARS, 'APP_CONFIG_CACHE'] as $name) {
             putenv($name);
         }
+        unset($_SERVER['APP_CONFIG_CACHE'], $_ENV['APP_CONFIG_CACHE']);
+        if ($this->configCache !== null) {
+            @unlink($this->configCache);
+        }
         $_SERVER['argv'] = $this->argv;
-        DocuconfServiceProvider::$exitUsing = null;
+        Console::$stderr = null;
+        Console::$exitUsing = null;
         Env::flush();
+    }
+
+    private function stderr(): string
+    {
+        rewind($this->stderr);
+        return (string) stream_get_contents($this->stderr);
     }
 
     /**
@@ -65,8 +93,16 @@ final class LaravelTest extends TestCase
     {
         // Config files run before providers boot, as here.
         Env::flush();
+        $app['env'] = $this->appEnv;
+        if ($this->envPath !== null) {
+            $app->useEnvironmentPath($this->envPath);
+        }
         $app['config']->set('orders', self::ordersConfig());
         $app['config']->set('docuconf.name', 'orders');
+        if ($this->cachedFingerprints !== null) {
+            // As if loaded from bootstrap/cache/config.php.
+            $app['config']->set(DocuconfServiceProvider::FINGERPRINTS, $this->cachedFingerprints);
+        }
     }
 
     private function application(): \Illuminate\Foundation\Application
@@ -91,6 +127,8 @@ final class LaravelTest extends TestCase
         putenv('ORDERS_PORT=9090');
         putenv('ORDERS_TIMEOUT=45s');
         putenv('ORDERS_ORIGINS=https://a.example.com,https://b.example.com');
+        putenv('ORDERS_DATABASE_URL');
+        $this->appEnv = 'testing';
         $this->refresh();
         self::assertSame(9090, config('orders.port'));
         self::assertEquals(Duration::ofSeconds(45), config('orders.timeout'));
@@ -101,6 +139,7 @@ final class LaravelTest extends TestCase
     public function testBadValueFallsBackToDefaultInConfig(): void
     {
         putenv('ORDERS_PORT=0');
+        $this->appEnv = 'testing';
         $this->refresh();
         self::assertSame(8080, config('orders.port'));
     }
@@ -117,6 +156,8 @@ final class LaravelTest extends TestCase
     public function testValuesThrowWhenInvalid(): void
     {
         putenv('ORDERS_PORT=0');
+        putenv('ORDERS_DATABASE_URL');
+        $this->appEnv = 'testing';
         $this->refresh();
         try {
             $values = $this->application()->make(Values::class);
@@ -132,30 +173,167 @@ final class LaravelTest extends TestCase
     public function testServeValidatesAtBootAndExits(): void
     {
         putenv('ORDERS_PORT=0');
-        $_SERVER['argv'] = ['artisan', 'serve'];
         $this->refresh();
         self::assertSame(1, self::$exitCode);
+        self::assertSame("docuconf: 1 configuration problem:\n  - ORDERS_PORT [out_of_range]: must be at least 1 (got \"0\")\n", $this->stderr());
     }
 
     public function testServeBootsWhenValid(): void
     {
-        putenv('ORDERS_DATABASE_URL=postgres://db/orders');
-        $_SERVER['argv'] = ['artisan', 'serve'];
+        $this->refresh();
+        self::assertNull(self::$exitCode);
+        self::assertSame('', $this->stderr());
+    }
+
+    public function testEveryCommandThatRunsTheAppValidates(): void
+    {
+        putenv('ORDERS_PORT=0');
+        foreach (['migrate', 'tinker', 'orders:work', 'queue:work', 'schedule:run'] as $command) {
+            self::$exitCode = null;
+            $_SERVER['argv'] = ['artisan', $command, '--force'];
+            $this->refresh();
+            self::assertSame(1, self::$exitCode, $command);
+        }
+    }
+
+    public function testMaintenanceCommandsSkipButWarnAboutInvalidValues(): void
+    {
+        putenv('ORDERS_PORT=0');
+        putenv('ORDERS_DATABASE_URL');
+        foreach (['config:cache', 'package:discover', 'optimize', 'list'] as $command) {
+            $_SERVER['argv'] = ['artisan', $command];
+            $this->refresh();
+            self::assertNull(self::$exitCode, $command);
+        }
+        self::assertStringContainsString("docuconf: warning: ORDERS_PORT is invalid (out_of_range); using its default (8080)\n", $this->stderr());
+        self::assertStringNotContainsString('ORDERS_DATABASE_URL', $this->stderr(), 'a missing value is not a substituted one');
+    }
+
+    public function testUnitTestsDoNotValidateAtBoot(): void
+    {
+        putenv('ORDERS_PORT=0');
+        $this->appEnv = 'testing';
         $this->refresh();
         self::assertNull(self::$exitCode);
     }
 
-    public function testOtherCommandsDoNotValidate(): void
+    public function testStaleConfigCacheFailsTheBoot(): void
+    {
+        // config:cache ran with ORDERS_PORT unset (8080); the container now sets 9000.
+        $this->cachedFingerprints = Env::fingerprints();
+        $this->configCache = (string) tempnam(sys_get_temp_dir(), 'docuconf-config');
+        putenv("APP_CONFIG_CACHE={$this->configCache}");
+        $_SERVER['APP_CONFIG_CACHE'] = $this->configCache;
+        putenv('ORDERS_PORT=9000');
+        $this->refresh();
+        self::assertSame(1, self::$exitCode);
+        self::assertStringContainsString('docuconf: config cache is stale: ', $this->stderr());
+        self::assertStringContainsString(' was built with other values of ORDERS_PORT than the environment has now', $this->stderr());
+        self::assertStringContainsString('run `php artisan config:cache` at container start, not at build', $this->stderr());
+        $this->command('docuconf:check')->assertExitCode(1);
+    }
+
+    public function testCurrentConfigCacheBoots(): void
+    {
+        putenv('ORDERS_PORT=9000');
+        $this->refresh();
+        $this->cachedFingerprints = Env::fingerprints();
+        $this->configCache = (string) tempnam(sys_get_temp_dir(), 'docuconf-config');
+        putenv("APP_CONFIG_CACHE={$this->configCache}");
+        $_SERVER['APP_CONFIG_CACHE'] = $this->configCache;
+        $this->refresh();
+        self::assertNull(self::$exitCode, $this->stderr());
+    }
+
+    public function testConfigCacheIsComparedWithDotenvToo(): void
+    {
+        // config:cache read ORDERS_PORT=9000 from .env; with config cached,
+        // Laravel no longer loads .env, but the value is still the current one.
+        putenv('ORDERS_PORT=9000');
+        $this->refresh();
+        $this->cachedFingerprints = Env::fingerprints();
+        putenv('ORDERS_PORT');
+        $dir = sys_get_temp_dir() . '/docuconf-dotenv-' . bin2hex(random_bytes(4));
+        $this->envPath = $dir;
+        mkdir($dir);
+        file_put_contents("$dir/.env", "ORDERS_PORT=9000\n");
+        $this->configCache = (string) tempnam(sys_get_temp_dir(), 'docuconf-config');
+        $_SERVER['APP_CONFIG_CACHE'] = $this->configCache;
+        try {
+            $this->refresh();
+            self::assertNull(self::$exitCode, $this->stderr());
+        } finally {
+            unlink("$dir/.env");
+            rmdir($dir);
+        }
+    }
+
+    public function testStaleCacheOverHttpThrows(): void
+    {
+        $this->cachedFingerprints = ['ORDERS_PORT' => Env::fingerprint(1234)];
+        $this->configCache = (string) tempnam(sys_get_temp_dir(), 'docuconf-config');
+        $_SERVER['APP_CONFIG_CACHE'] = $this->configCache;
+        $_SERVER['APP_RUNNING_IN_CONSOLE'] = 'false';
+        try {
+            $this->refresh();
+            self::fail('the app booted');
+        } catch (StaleConfigCache $e) {
+            self::assertStringContainsString('other values of ORDERS_PORT', $e->getMessage());
+        } finally {
+            unset($_SERVER['APP_RUNNING_IN_CONSOLE']);
+        }
+        self::assertSame('', $this->stderr(), 'reported once, by the exception, not also to the error log');
+    }
+
+    public function testBadConfigOverHttpThrowsOnce(): void
     {
         putenv('ORDERS_PORT=0');
-        $_SERVER['argv'] = ['artisan', 'migrate'];
-        $this->refresh();
-        self::assertNull(self::$exitCode);
+        $_SERVER['APP_RUNNING_IN_CONSOLE'] = 'false';
+        try {
+            $this->refresh();
+            self::fail('the app booted');
+        } catch (ConfigurationError $e) {
+            self::assertSame([['var' => 'ORDERS_PORT', 'code' => 'out_of_range']], $e->codes());
+        } finally {
+            unset($_SERVER['APP_RUNNING_IN_CONSOLE']);
+        }
+        self::assertSame('', $this->stderr());
+    }
+
+    public function testDeclarationErrorsPointAtTheConfigFile(): void
+    {
+        try {
+            Env::int('WORKER_COUNT', 'Workers', default: 500, max: 64);
+            self::fail('expected a DeclarationError');
+        } catch (DeclarationError $e) {
+            self::assertStringContainsString('tests/Laravel/LaravelTest.php:' . (__LINE__ - 3) . ': WORKER_COUNT: ', $e->getMessage());
+        }
+    }
+
+    public function testPresetDeclaresLaravelsOwnVariables(): void
+    {
+        config()->set('docuconf.presets', ['laravel']);
+        $this->application()->forgetInstance(Declaration::class);
+        $cue = $this->application()->make(Declaration::class)->export();
+        self::assertStringContainsString('APP_KEY: {', $cue);
+        self::assertStringContainsString('LOG_LEVEL: {', $cue);
+    }
+
+    public function testDefaultNameWarning(): void
+    {
+        self::assertNull(DocuconfServiceProvider::nameWarning(config()));
+        config()->set('docuconf.name', null);
+        config()->set('app.name', 'Laravel');
+        self::assertStringContainsString('named "laravel" after Laravel\'s default app.name', (string) DocuconfServiceProvider::nameWarning(config()));
+        config()->set('app.name', 'Orders');
+        self::assertNull(DocuconfServiceProvider::nameWarning(config()));
     }
 
     public function testCheckCommand(): void
     {
         putenv('ORDERS_PORT=0');
+        putenv('ORDERS_DATABASE_URL');
+        $this->appEnv = 'testing';
         $this->refresh();
         $this->command('docuconf:check')->assertExitCode(1);
         putenv('ORDERS_PORT=80');
@@ -181,6 +359,7 @@ final class LaravelTest extends TestCase
     public function testDeclareEscapeHatchForFiles(): void
     {
         Env::declare(fn (Declaration $d) => $d->text('license', '/etc/orders/license/key')->describe('Licence key'));
+        $this->application()->forgetInstance(Declaration::class);
         self::assertStringContainsString('license: {', $this->application()->make(Declaration::class)->export());
     }
 }

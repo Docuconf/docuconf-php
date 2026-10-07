@@ -3,13 +3,13 @@
 namespace App;
 
 use Docuconf\Symfony\DocuconfBundle;
+use Docuconf\Values;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
 use Symfony\Component\Routing\Attribute\Route;
-use Docuconf\Symfony\Docuconf;
 
 final class Kernel extends BaseKernel
 {
@@ -29,8 +29,8 @@ final class Kernel extends BaseKernel
 
     // The typed configuration, with the secret shown as "***".
     #[Route('/config')]
-    public function config(Docuconf $docuconf): JsonResponse
+    public function config(Values $config): JsonResponse
     {
-        return new JsonResponse($docuconf->values()->redacted());
+        return new JsonResponse($config->redacted());
     }
 }

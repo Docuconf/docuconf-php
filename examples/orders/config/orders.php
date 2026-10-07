@@ -8,10 +8,11 @@ use Docuconf\Laravel\Env;
 return [
     'port' => Env::int('PORT', 'HTTP listen port', default: 8080, min: 1, max: 65535),
 
-    'log_level' => Env::enum('LOG_LEVEL', 'Minimum log level', ['debug', 'info', 'warn', 'error'], default: 'info'),
+    // ORDERS_, not LOG_LEVEL: Laravel's own config/logging.php reads LOG_LEVEL.
+    'log_level' => Env::enum('ORDERS_LOG_LEVEL', 'Minimum level the orders code logs', ['debug', 'info', 'warn', 'error'], default: 'info'),
 
     // A secret: never printed, and the platform must supply it from a Secret.
-    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres'], secret: true),
+    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true),
 
     'allowed_origins' => Env::list('ALLOWED_ORIGINS', 'Origins allowed to call the API (CORS)', default: ['http://localhost:3000'], minItems: 1),
 

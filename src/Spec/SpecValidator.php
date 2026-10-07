@@ -111,7 +111,7 @@ final class SpecValidator
         ];
         foreach ($only as $field => $types) {
             if ($v->{$field} !== null && !in_array($v->type, $types, true)) {
-                $p[] = "$field does not apply to a {$v->type} variable";
+                $p[] = "$field does not apply to " . self::article($v->type) . " {$v->type} variable";
             }
         }
         if ($v->pattern !== null && ($err = Re2::check($v->pattern)) !== null) {
@@ -234,6 +234,10 @@ final class SpecValidator
         if (($f->type === 'tls' || $f->type === 'keystore') && !$f->secret) {
             $p[] = "a {$f->type} input is always secret";
         }
+        $needsOpenssl = in_array($f->type, ['tls', 'caBundle'], true) || $f->type === 'keystore' && $f->format === 'pkcs12';
+        if ($needsOpenssl && !extension_loaded('openssl')) {
+            $p[] = "checking a {$f->type} input needs PHP's openssl extension";
+        }
         switch ($f->type) {
             case 'config':
                 if (!in_array($f->format, ['json', 'yaml', 'toml'], true)) {
@@ -277,5 +281,11 @@ final class SpecValidator
                 break;
         }
         return $p;
+    }
+
+    /** "a" or "an", for messages: "an int variable", "a string variable". */
+    public static function article(string $word): string
+    {
+        return in_array(strtolower($word[0] ?? ''), ['a', 'e', 'i', 'o', 'u'], true) ? 'an' : 'a';
     }
 }

@@ -6,6 +6,7 @@ namespace Docuconf\Laravel\Commands;
 
 use Docuconf\Declaration;
 use Docuconf\DeclarationError;
+use Docuconf\Laravel\DocuconfServiceProvider;
 use Illuminate\Console\Command;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -31,6 +32,10 @@ final class ExportCommand extends Command
         $output = $this->option('output');
         $output = is_string($output) ? $output : null;
         $err = $this->getOutput()->getErrorStyle();
+        $warning = DocuconfServiceProvider::nameWarning($this->laravel->make('config'));
+        if ($warning !== null) {
+            $err->writeln("docuconf: warning: $warning", OutputInterface::OUTPUT_RAW);
+        }
         if ($this->option('check')) {
             if ($output === null) {
                 $err->writeln('docuconf: --check needs --output', OutputInterface::OUTPUT_RAW);

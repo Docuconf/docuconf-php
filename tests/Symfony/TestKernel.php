@@ -32,6 +32,8 @@ final class TestKernel extends Kernel
         $container->extension('docuconf', $this->docuconf);
         $container->parameters()->set('orders.port', '%env(docuconf:ORDERS_PORT)%');
         $container->parameters()->set('orders.timeout', '%env(docuconf_seconds:ORDERS_TIMEOUT)%');
+        $container->parameters()->set('orders.no_origins', null);
+        $container->parameters()->set('orders.origins_or_default', '%env(default:orders.no_origins:docuconf:ORDERS_ORIGINS)%');
         $container->services()->set('orders.config', \ArrayObject::class)
             ->args([['port' => '%env(docuconf:ORDERS_PORT)%', 'timeout' => '%env(docuconf_seconds:ORDERS_TIMEOUT)%', 'origins' => '%env(docuconf:ORDERS_ORIGINS)%']])
             ->public();
