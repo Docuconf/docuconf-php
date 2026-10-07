@@ -9,6 +9,7 @@ use Docuconf\Declaration;
 use Docuconf\Env;
 use Docuconf\Export\Exporter;
 use Docuconf\Tests\Support\CueVet;
+use Docuconf\Tests\Support\Golden;
 use PHPUnit\Framework\TestCase;
 
 final class ExportTest extends TestCase
@@ -18,15 +19,6 @@ final class ExportTest extends TestCase
         return require __DIR__ . '/Fixtures/sample_gateway.php';
     }
 
-    /**
-     * Replaces the value of metadata.generator.version. It is Version::VERSION, which every release PR bumps, so
-     * comparisons with the committed golden file ignore it.
-     */
-    private static function withoutGeneratorVersion(string $cue): string
-    {
-        return (string) preg_replace('/(generator:\s*\{[^{}]*?\bversion:\s*)"[^"]*"/', '$1"<generator-version>"', $cue);
-    }
-
     public function testMatchesTheGoldenFile(): void
     {
         $golden = __DIR__ . '/golden/sample_gateway.cue';
@@ -34,8 +26,8 @@ final class ExportTest extends TestCase
             file_put_contents($golden, self::fixture()->export());
         }
         self::assertSame(
-            self::withoutGeneratorVersion((string) file_get_contents($golden)),
-            self::withoutGeneratorVersion(self::fixture()->export()),
+            Golden::withoutGeneratorVersion((string) file_get_contents($golden)),
+            Golden::withoutGeneratorVersion(self::fixture()->export()),
         );
     }
 
@@ -44,9 +36,9 @@ final class ExportTest extends TestCase
         $cue = self::fixture()->export();
         $bumped = (string) preg_replace('/(\bversion:\s*)"[^"]*"/', '$1"99.0.0"', $cue, 1);
         self::assertNotSame($cue, $bumped);
-        self::assertSame(self::withoutGeneratorVersion($cue), self::withoutGeneratorVersion($bumped));
+        self::assertSame(Golden::withoutGeneratorVersion($cue), Golden::withoutGeneratorVersion($bumped));
         $renamed = str_replace('"HTTP listen port"', '"port"', $cue);
-        self::assertNotSame(self::withoutGeneratorVersion($cue), self::withoutGeneratorVersion($renamed));
+        self::assertNotSame(Golden::withoutGeneratorVersion($cue), Golden::withoutGeneratorVersion($renamed));
     }
 
     public function testGoldenFilePassesTheMetaSchema(): void
@@ -110,8 +102,8 @@ final class ExportTest extends TestCase
         exec(PHP_BINARY . ' ' . escapeshellarg($bin) . ' export ' . escapeshellarg($fixture) . ' -o ' . escapeshellarg($out) . ' 2>&1', $o, $code);
         self::assertSame(0, $code, implode("\n", $o));
         self::assertSame(
-            self::withoutGeneratorVersion((string) file_get_contents(__DIR__ . '/golden/sample_gateway.cue')),
-            self::withoutGeneratorVersion((string) file_get_contents($out)),
+            Golden::withoutGeneratorVersion((string) file_get_contents(__DIR__ . '/golden/sample_gateway.cue')),
+            Golden::withoutGeneratorVersion((string) file_get_contents($out)),
         );
         exec(PHP_BINARY . ' ' . escapeshellarg($bin) . ' export ' . escapeshellarg($fixture) . ' -o ' . escapeshellarg($out) . ' --check 2>&1', $o, $code);
         self::assertSame(0, $code);

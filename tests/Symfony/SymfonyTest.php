@@ -9,6 +9,7 @@ use Docuconf\Console;
 use Docuconf\Duration;
 use Docuconf\Symfony\BootValidator;
 use Docuconf\Symfony\Docuconf;
+use Docuconf\Tests\Support\Golden;
 use Docuconf\Values;
 use PHPUnit\Framework\TestCase;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
@@ -232,6 +233,9 @@ final class SymfonyTest extends TestCase
         $kernel = $this->kernel(['declaration' => $file, 'name' => 'ignored']);
         $docuconf = $kernel->getContainer()->get(Docuconf::class);
         self::assertInstanceOf(Docuconf::class, $docuconf);
-        self::assertSame(file_get_contents(dirname(__DIR__) . '/golden/sample_gateway.cue'), $docuconf->export());
+        self::assertSame(
+            Golden::withoutGeneratorVersion((string) file_get_contents(dirname(__DIR__) . '/golden/sample_gateway.cue')),
+            Golden::withoutGeneratorVersion($docuconf->export()),
+        );
     }
 }
