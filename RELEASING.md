@@ -26,3 +26,28 @@ the package from this GitHub repository; there is nothing to upload.
 Versions follow semver. While the contract format is `v1alpha1`, minor versions may change the declaration API.
 
 The licence is MIT (`LICENSE`, and `"license": "MIT"` in `composer.json`).
+
+## GitHub Packages and Releases
+
+GitHub Packages has no Composer registry, so the GitHub copy of each release is the GitHub Release. After the tag
+check and the tests, `release.yml` builds `docuconf-php-<version>.zip` with `composer archive` (the same files
+Packagist serves: `.gitattributes` leaves out tests, examples and tooling), creates the GitHub release if it does not
+exist, and attaches the zip and its `docuconf-php-<version>.zip.sha256`.
+
+It needs no setup and does not depend on Packagist: it uses only the workflow's own `GITHUB_TOKEN`
+(`contents: write`), which the `Docuconf` organization allows unless it has restricted workflow permissions under
+Organization settings > Actions.
+
+### Installing from GitHub
+
+No token is needed for a public repository. Composer can install straight from the repository's tags:
+
+```json
+{
+    "repositories": [{"type": "vcs", "url": "https://github.com/docuconf/docuconf-php"}],
+    "require": {"docuconf/docuconf": "^0.1"}
+}
+```
+
+The zip is the exact dist archive for that version, for checking (`sha256sum -c docuconf-php-0.1.0.zip.sha256`),
+mirroring or vendoring offline; Composer itself resolves the version from the tag.

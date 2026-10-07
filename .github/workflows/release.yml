@@ -2,7 +2,8 @@ name: Release
 
 # Packagist publishes tags itself, through the GitHub webhook set up when the
 # package was submitted (see RELEASING.md). This workflow checks the tag and
-# creates the GitHub release; nothing here uploads the package.
+# creates the GitHub release with the `composer archive` zip and its SHA-256
+# attached; nothing here uploads to Packagist.
 on:
   push:
     tags: ["v*"]
@@ -25,8 +26,23 @@ jobs:
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Version::VERSION $version" >&2; exit 1; }
       - run: composer validate --strict --no-check-lock
       - run: composer update --no-interaction --no-progress --prefer-dist && vendor/bin/phpunit
+      # The zip is what Composer would install (composer archive honours the
+      # export-ignore rules in .gitattributes), with its SHA-256.
+      - name: Build the package zip
+        run: |
+          name="docuconf-php-${GITHUB_REF_NAME#v}"
+          rm -rf vendor
+          mkdir -p dist
+          composer archive --format=zip --dir=dist --file="$name"
+          (cd dist && sha256sum "$name.zip" > "$name.zip.sha256" && cat "$name.zip.sha256")
       - name: GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            flags=()
+            case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag "${flags[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/docuconf-php-*.zip dist/docuconf-php-*.zip.sha256 --clobber
         env:
           GH_TOKEN: ${{ github.token }}
       # Only needed if the Packagist webhook is missing: set the PACKAGIST_USERNAME
