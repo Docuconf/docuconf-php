@@ -63,15 +63,23 @@ environment is read.
 | `isFloat()` | `float` | `min()`, `max()`, `between()` |
 | `isBoolean()` | `bool` (`true`/`false`, also phpdotenv's `yes`/`on`/`1`...) | |
 | `isDuration($encoding = 'go')` | `Docuconf\Duration` | `min()`, `max()`, `between()` with `'1s'` or a Duration |
-| `isUrl(...$schemes)` | `string` | `schemes()` |
+| `isUrl(...$schemes)` | `string` | `schemes()`, `maxLength()` |
 | `allowedValues([...])` or `allowedValues(MyEnum::class)` | `string` | |
-| `isList($items = 'string', $encoding = 'csv', $separator = ',')` | `list<string>` or `list<int>` | `minItems()`, `maxItems()`, `itemsBetween($min, $max)` (int items) |
-| `isJson(MyClass::class)` or `isJson($jsonSchema)` | an instance, or decoded JSON | the JSON Schema |
+| `isList($items = 'string', $encoding = 'csv', $separator = ',')` | `list<string>` or `list<int>` | `minItems()`, `maxItems()`, `itemsBetween($min, $max)` (int items), `itemMinLength()`, `itemMaxLength()` (string items) |
+| `isJson(MyClass::class)` or `isJson($jsonSchema)` | an instance, or decoded JSON | the JSON Schema, `maxLength()` |
 
 Every variable also takes `describe()` (required, 5+ characters), `secret()`, `default()`, `group()`,
 `examples()`, `configKey()` and `deprecated()`. Mistakes in the declaration itself (a bad name, a short
 description, a default that breaks its own rules, a non-RE2 pattern) throw `Docuconf\DeclarationError` when the
 declaration is first used.
+
+**Lengths** count characters, meaning Unicode code points (`mb_strlen($s, 'UTF-8')`), never bytes: `日本` is 2
+characters and `ZÜ01` fits an `itemMaxLength(4)`. `maxLength()` bounds a url as it is, and a json value as the app
+receives it, before it is parsed and whitespace included (a json default is measured as compact JSON).
+`itemMinLength()` and `itemMaxLength()` bound each item of a string list after it is split, so a separator never
+counts. A value out of bounds is `out_of_range`, and a secret is reported by its length, never its value. The
+`Env::url()` and `Env::json()` helpers take `maxLength:`, and `Env::list()` takes `itemMinLength:` and
+`itemMaxLength:`.
 
 **Encodings.** Lists are `csv` (`a,b`), `json` (`["a","b"]`) or `indexed` (`NAME__0`, `NAME__1`, numbered from
 0 with no gap); durations are `go` (`1m30s`), `iso8601` (`PT90S`), `seconds` (`90`) or `timespan` (`00:01:30`).
