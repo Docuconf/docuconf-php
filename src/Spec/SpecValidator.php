@@ -227,6 +227,10 @@ final class SpecValidator
         if (($f->type === 'tls' || $f->type === 'keystore') && !$f->secret) {
             $p[] = "a {$f->type} input is always secret";
         }
+        $needsOpenssl = in_array($f->type, ['tls', 'caBundle'], true) || $f->type === 'keystore' && $f->format === 'pkcs12';
+        if ($needsOpenssl && !extension_loaded('openssl')) {
+            $p[] = "checking a {$f->type} input needs PHP's openssl extension";
+        }
         switch ($f->type) {
             case 'config':
                 if (!in_array($f->format, ['json', 'yaml', 'toml'], true)) {

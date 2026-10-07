@@ -29,7 +29,7 @@ contract.#Contract & {
 			description: "Orders database connection string"
 			required:    true
 			secret:      true
-			schemes: ["postgres"]
+			schemes: ["postgres", "postgresql"]
 		}
 		LOG_LEVEL: {
 			type:        "enum"
