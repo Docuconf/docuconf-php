@@ -57,9 +57,29 @@ final class Cue
     public static function struct(array $fields, int $indent): string
     {
         $pad = str_repeat("\t", $indent + 1);
-        $out = "{\n";
+        $lines = [];
         foreach ($fields as $key => $v) {
-            $out .= $pad . self::label((string) $key) . ': ' . self::value($v, $indent + 1) . "\n";
+            $lines[] = [self::label((string) $key) . ':', self::value($v, $indent + 1)];
+        }
+        // Align the values of consecutive one-line fields, as `cue fmt` does.
+        $out = "{\n";
+        $count = count($lines);
+        for ($i = 0; $i < $count;) {
+            $j = $i;
+            $width = 0;
+            // `cue fmt` neither aligns a list nor carries alignment past one.
+            while ($j < $count && !str_contains($lines[$j][1], "\n") && !str_starts_with($lines[$j][1], '[')) {
+                $width = max($width, strlen($lines[$j][0]));
+                $j++;
+            }
+            if ($j === $i) {
+                $out .= $pad . $lines[$i][0] . ' ' . $lines[$i][1] . "\n";
+                $i++;
+                continue;
+            }
+            for (; $i < $j; $i++) {
+                $out .= $pad . str_pad($lines[$i][0], $width) . ' ' . $lines[$i][1] . "\n";
+            }
         }
         return $out . str_repeat("\t", $indent) . '}';
     }

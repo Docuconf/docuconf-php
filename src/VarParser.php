@@ -222,10 +222,10 @@ final class VarParser
                     return ['invalid_type', "is not an {$spec->type}"];
                 }
                 if ($spec->min !== null && !$spec->min instanceof Duration && $value < $spec->min) {
-                    return ['out_of_range', 'is below min ' . self::number($spec->min) . $got];
+                    return ['out_of_range', 'must be at least ' . self::number($spec->min) . $got];
                 }
                 if ($spec->max !== null && !$spec->max instanceof Duration && $value > $spec->max) {
-                    return ['out_of_range', 'is above max ' . self::number($spec->max) . $got];
+                    return ['out_of_range', 'must be at most ' . self::number($spec->max) . $got];
                 }
                 return null;
             case 'bool':
@@ -236,10 +236,10 @@ final class VarParser
                 }
                 $got = $spec->secret ? '' : " (got $value)";
                 if ($spec->min instanceof Duration && $value->compare($spec->min) < 0) {
-                    return ['out_of_range', "is below min {$spec->min}$got"];
+                    return ['out_of_range', "must be at least {$spec->min}$got"];
                 }
                 if ($spec->max instanceof Duration && $value->compare($spec->max) > 0) {
-                    return ['out_of_range', "is above max {$spec->max}$got"];
+                    return ['out_of_range', "must be at most {$spec->max}$got"];
                 }
                 if (($spec->encoding() ?? 'go') !== 'go' && $value->nanoseconds % Duration::MILLISECOND !== 0) {
                     return ['invalid_type', 'has a precision finer than a millisecond, which its encoding cannot carry'];

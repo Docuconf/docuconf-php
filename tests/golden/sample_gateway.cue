@@ -5,83 +5,83 @@ import "docuconf.dev/contract"
 
 contract.#Contract & {
 	apiVersion: "docuconf.dev/v1alpha1"
-	kind: "ConfigContract"
+	kind:       "ConfigContract"
 	metadata: {
 		name: "sample-gateway"
 		generator: {
 			language: "php"
-			sdk: "docuconf/docuconf"
-			version: "0.1.0"
+			sdk:      "docuconf/docuconf"
+			version:  "0.1.0"
 		}
 	}
 	vars: {
 		ALLOWED_ORIGINS: {
-			type: "list"
+			type:        "list"
 			description: "CORS origins allowed to call the API"
-			required: true
-			items: "string"
-			encoding: "csv"
-			separator: ","
-			minItems: 1
-			maxItems: 10
+			required:    true
+			items:       "string"
+			encoding:    "csv"
+			separator:   ","
+			minItems:    1
+			maxItems:    10
 		}
 		DATABASE_URL: {
-			type: "url"
+			type:        "url"
 			description: "Primary Postgres connection string"
-			required: true
-			secret: true
+			required:    true
+			secret:      true
 			schemes: ["postgres", "postgresql"]
 		}
 		DEBUG: {
-			type: "bool"
+			type:        "bool"
 			description: "Verbose request logging"
-			default: false
+			default:     false
 		}
 		GOMEMLIMIT: {
-			type: "int"
+			type:        "int"
 			description: "Soft memory limit, in bytes"
-			min: 1
+			min:         1
 		}
 		KEYSTORE_PASSWORD: {
-			type: "string"
+			type:        "string"
 			description: "Password for the partner keystore"
-			required: true
-			secret: true
-			minLength: 1
+			required:    true
+			secret:      true
+			minLength:   1
 		}
 		LOG_LEVEL: {
-			type: "enum"
+			type:        "enum"
 			description: "Minimum log level emitted"
-			group: "logging"
+			group:       "logging"
 			values: ["debug", "info", "warn", "error"]
 			default: "info"
 		}
 		PORT: {
-			type: "int"
+			type:        "int"
 			description: "HTTP listen port"
-			min: 1
-			max: 65535
-			default: 8080
+			min:         1
+			max:         65535
+			default:     8080
 		}
 		PUBLIC_URL: {
-			type: "url"
+			type:        "url"
 			description: "Externally visible base URL"
-			required: true
+			required:    true
 			schemes: ["https"]
 		}
 		RATE_LIMITS: {
-			type: "json"
+			type:        "json"
 			description: "Default per-client rate limits"
 			schema: {
-				type: "object"
+				type:  "object"
 				title: "RateLimits"
 				properties: {
 					perMinute: {
-						type: "integer"
+						type:    "integer"
 						minimum: 1
 					}
 					burst: {
-						type: "integer"
+						type:    "integer"
 						minimum: 0
 						default: 0
 					}
@@ -91,87 +91,87 @@ contract.#Contract & {
 			}
 		}
 		REGION: {
-			type: "string"
+			type:        "string"
 			description: "Cloud region the service runs in"
-			required: true
+			required:    true
 			examples: ["eu-west-1"]
 			minLength: 4
 			maxLength: 32
-			pattern: "^[a-z]{2}-[a-z]+-[0-9]$"
+			pattern:   "^[a-z]{2}-[a-z]+-[0-9]$"
 		}
 		REQUEST_TIMEOUT: {
-			type: "duration"
+			type:        "duration"
 			description: "Upstream request timeout"
-			encoding: "go"
-			min: "1s"
-			max: "5m"
-			default: "30s"
+			encoding:    "go"
+			min:         "1s"
+			max:         "5m"
+			default:     "30s"
 		}
 		SAMPLE_RATE: {
-			type: "float"
+			type:        "float"
 			description: "Fraction of requests traced"
-			min: 0.0
-			max: 1.0
-			default: 0.25
+			min:         0.0
+			max:         1.0
+			default:     0.25
 		}
 		WORKER_PORTS: {
-			type: "list"
+			type:        "list"
 			description: "Ports the workers bind"
-			items: "int"
-			encoding: "json"
-			itemMin: 1
-			itemMax: 65535
+			items:       "int"
+			encoding:    "json"
+			itemMin:     1
+			itemMax:     65535
 			default: []
 		}
 	}
 	files: {
 		geoip: {
-			type: "binary"
+			type:        "binary"
 			description: "GeoIP database for country-based routing"
-			path: "/data/geoip/GeoLite2-City.mmdb"
-			maxSize: 134217728
+			path:        "/data/geoip/GeoLite2-City.mmdb"
+			maxSize:     134217728
 		}
 		license: {
-			type: "text"
+			type:        "text"
 			description: "Gateway licence key"
-			required: true
-			path: "/etc/gateway/license/license.key"
-			pattern: "^[A-Z0-9]{5}(-[A-Z0-9]{5}){3}\\n?$"
+			required:    true
+			path:        "/etc/gateway/license/license.key"
+			pattern:     "^[A-Z0-9]{5}(-[A-Z0-9]{5}){3}\\n?$"
 		}
 		"partner-keystore": {
-			type: "keystore"
-			format: "pkcs12"
+			type:        "keystore"
+			format:      "pkcs12"
 			description: "Client certificate for mTLS to the partner API"
-			secret: true
-			path: "/etc/gateway/partner/keystore.p12"
+			secret:      true
+			path:        "/etc/gateway/partner/keystore.p12"
 			passwordVar: "KEYSTORE_PASSWORD"
 		}
 		routes: {
-			type: "config"
-			format: "yaml"
+			type:        "config"
+			format:      "yaml"
 			description: "Routing table: path prefixes and their upstreams"
-			required: true
-			path: "/etc/gateway/routes/routes.yaml"
-			pathEnv: "ROUTES_FILE"
-			maxSize: 65536
+			required:    true
+			path:        "/etc/gateway/routes/routes.yaml"
+			pathEnv:     "ROUTES_FILE"
+			maxSize:     65536
 			schema: {
 				"$defs": {
 					Route: {
-						type: "object"
+						type:  "object"
 						title: "Route"
 						properties: {
 							match: {
-								type: "string"
+								type:    "string"
 								pattern: "^/"
 							}
 							upstream: {
-								type: "string"
+								type:    "string"
 								pattern: "^https?://"
 							}
 							timeout: {
 								anyOf: [
 									{
-										type: "string"
+										type:    "string"
 										pattern: "^([0-9]+(\\.[0-9]*)?(ns|us|ms|s|m|h))+$"
 									},
 									{
@@ -185,7 +185,7 @@ contract.#Contract & {
 						additionalProperties: false
 					}
 				}
-				type: "object"
+				type:  "object"
 				title: "Routes"
 				properties: {
 					routes: {
@@ -201,21 +201,21 @@ contract.#Contract & {
 			}
 		}
 		"serving-tls": {
-			type: "tls"
+			type:        "tls"
 			description: "Certificate the gateway serves HTTPS with"
-			required: true
-			secret: true
-			path: "/etc/gateway/tls"
+			required:    true
+			secret:      true
+			path:        "/etc/gateway/tls"
 			dnsNames: ["gateway.internal", "api.example.com"]
 			keyAlgorithms: ["ECDSA", "RSA"]
 			minRemaining: "720h"
-			requireCA: true
+			requireCA:    true
 		}
 		"upstream-ca": {
-			type: "caBundle"
+			type:        "caBundle"
 			description: "Private CAs the gateway trusts for upstream TLS"
-			path: "/etc/gateway/ca/bundle.pem"
-			pathEnv: "SSL_CERT_FILE"
+			path:        "/etc/gateway/ca/bundle.pem"
+			pathEnv:     "SSL_CERT_FILE"
 		}
 	}
 }
