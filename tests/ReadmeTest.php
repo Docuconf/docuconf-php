@@ -96,6 +96,33 @@ final class ReadmeTest extends TestCase
         }
     }
 
+    public function testExampleReadmesMatchTheirFiles(): void
+    {
+        // The Laravel example's README shows config/orders.php; every line it shows must be in the file.
+        $readme = (string) file_get_contents(dirname(__DIR__) . '/examples/orders/README.md');
+        $file = (string) file_get_contents(dirname(__DIR__) . '/examples/orders/config/orders.php');
+        if (preg_match('/```php\n(.*?)```/s', $readme, $m) !== 1) {
+            self::fail('no php block');
+        }
+        foreach (explode("\n", trim($m[1])) as $line) {
+            if (trim($line) !== '') {
+                self::assertStringContainsString(trim($line), $file, 'examples/orders/README.md is out of date');
+            }
+        }
+        // And the Symfony example's README, its docuconf.yaml.
+        $readme = (string) file_get_contents(dirname(__DIR__) . '/examples/orders-symfony/README.md');
+        $yaml = (string) file_get_contents(dirname(__DIR__) . '/examples/orders-symfony/config/packages/docuconf.yaml');
+        if (preg_match('/```yaml\n(.*?)```/s', $readme, $m) !== 1) {
+            self::fail('no yaml block');
+        }
+        foreach (explode("\n", trim($m[1])) as $line) {
+            $line = trim((string) preg_replace('/\s+#.*$/', '', $line));
+            if ($line !== '' && $line !== '...') {
+                self::assertStringContainsString($line, $yaml, 'examples/orders-symfony/README.md is out of date');
+            }
+        }
+    }
+
     public function testQuickstartConsoleBlocks(): void
     {
         $blocks = self::blocks('console', true);
