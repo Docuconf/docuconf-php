@@ -29,6 +29,7 @@ final class LaravelTest extends TestCase
     /** @var array<string, string>|null fingerprints a config cache was built with */
     private ?array $cachedFingerprints = null;
     private ?string $configCache = null;
+    private ?string $envPath = null;
 
     protected function setUp(): void
     {
@@ -93,6 +94,9 @@ final class LaravelTest extends TestCase
         // Config files run before providers boot, as here.
         Env::flush();
         $app['env'] = $this->appEnv;
+        if ($this->envPath !== null) {
+            $app->useEnvironmentPath($this->envPath);
+        }
         $app['config']->set('orders', self::ordersConfig());
         $app['config']->set('docuconf.name', 'orders');
         if ($this->cachedFingerprints !== null) {
@@ -239,6 +243,29 @@ final class LaravelTest extends TestCase
         $_SERVER['APP_CONFIG_CACHE'] = $this->configCache;
         $this->refresh();
         self::assertNull(self::$exitCode, $this->stderr());
+    }
+
+    public function testConfigCacheIsComparedWithDotenvToo(): void
+    {
+        // config:cache read ORDERS_PORT=9000 from .env; with config cached,
+        // Laravel no longer loads .env, but the value is still the current one.
+        putenv('ORDERS_PORT=9000');
+        $this->refresh();
+        $this->cachedFingerprints = Env::fingerprints();
+        putenv('ORDERS_PORT');
+        $dir = sys_get_temp_dir() . '/docuconf-dotenv-' . bin2hex(random_bytes(4));
+        $this->envPath = $dir;
+        mkdir($dir);
+        file_put_contents("$dir/.env", "ORDERS_PORT=9000\n");
+        $this->configCache = (string) tempnam(sys_get_temp_dir(), 'docuconf-config');
+        $_SERVER['APP_CONFIG_CACHE'] = $this->configCache;
+        try {
+            $this->refresh();
+            self::assertNull(self::$exitCode, $this->stderr());
+        } finally {
+            unlink("$dir/.env");
+            rmdir($dir);
+        }
     }
 
     public function testStaleCacheOverHttpThrows(): void

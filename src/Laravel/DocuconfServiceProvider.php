@@ -32,9 +32,10 @@ use Illuminate\Support\Str;
  * written to the Kubernetes termination log.
  *
  * With `php artisan config:cache`, the app reads the cached values, so
- * docuconf checks that they are what the environment gives now, and fails
- * when the cache was built with different values (as when it is built
- * into an image before the real environment exists).
+ * docuconf checks that they are what `config:cache` would give now (the
+ * environment and .env), and fails when the cache was built with other
+ * values (as when it is built into an image before the real environment
+ * exists).
  */
 final class DocuconfServiceProvider extends ServiceProvider
 {
@@ -149,6 +150,11 @@ final class DocuconfServiceProvider extends ServiceProvider
         $config = $this->config();
         $version = $config->get('docuconf.app_version');
         $declaration = Env::declaration(self::name($config), is_string($version) ? $version : null);
+        if ($this->app instanceof Application && $this->app->configurationIsCached()) {
+            // Laravel skips .env when config is cached; read it as config:cache
+            // did, so the check compares like with like.
+            $declaration->withDotenv($this->app->environmentPath(), $this->app->environmentFile());
+        }
         foreach ((array) $config->get('docuconf.presets', []) as $preset) {
             Presets::apply($declaration, (string) $preset);
         }
