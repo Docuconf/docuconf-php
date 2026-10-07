@@ -1,0 +1,5 @@
+framework:
+    secret: not-used-by-this-service
+    http_method_override: false
+    php_errors:
+        log: true
