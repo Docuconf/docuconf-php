@@ -98,4 +98,36 @@ final class Console
         }
         return $result->values;
     }
+
+    /** The console command being run: the first argument that is not an option ("list" when none). */
+    public static function command(): string
+    {
+        $argv = $_SERVER['argv'] ?? [];
+        $args = is_array($argv) ? array_values(array_slice($argv, 1)) : [];
+        for ($i = 0; $i < count($args); $i++) {
+            $arg = $args[$i];
+            if (!is_string($arg) || $arg === '') {
+                continue;
+            }
+            if ($arg === '-e' || $arg === '--env') {
+                $i++; // its value
+                continue;
+            }
+            if ($arg[0] !== '-') {
+                return $arg;
+            }
+        }
+        return 'list';
+    }
+
+    /** @param list<string> $patterns command names; a trailing * matches any suffix */
+    public static function matches(string $command, array $patterns): bool
+    {
+        foreach ($patterns as $p) {
+            if ($p === $command || str_ends_with($p, '*') && str_starts_with($command, substr($p, 0, -1))) {
+                return true;
+            }
+        }
+        return false;
+    }
 }
