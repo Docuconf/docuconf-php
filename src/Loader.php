@@ -48,6 +48,53 @@ final class Loader
                 $warnings[] = "file $name is deprecated: {$file->deprecated['message']}";
             }
         }
+        array_push($warnings, ...self::typos($spec, $env));
         return new LoadResult(new Values($spec, $values, $present, $files), $violations, $warnings);
+    }
+
+    /**
+     * Hints for variables that are set but not declared, and are one or two
+     * edits away from a declared name: "DATABSE_URL is set but not
+     * declared; did you mean DATABASE_URL?". The value is never shown.
+     *
+     * @param array<string, string> $env
+     * @return list<string>
+     */
+    public static function typos(ContractSpec $spec, #[\SensitiveParameter] array $env): array
+    {
+        $declared = array_keys($spec->vars);
+        foreach ($spec->files as $file) {
+            if ($file->pathEnv !== null) {
+                $declared[] = $file->pathEnv;
+            }
+        }
+        if ($declared === []) {
+            return [];
+        }
+        $known = array_flip($declared);
+        $hints = [];
+        foreach (array_keys($env) as $name) {
+            $name = (string) $name;
+            if (isset($known[$name]) || str_starts_with($name, 'DOCUCONF_') || !preg_match('/^[A-Z][A-Z0-9_]*$/', $name)) {
+                continue;
+            }
+            if (preg_match('/^(.+)__\d+$/', $name, $m) && isset($known[$m[1]])) {
+                continue; // an item of an indexed list
+            }
+            $best = null;
+            $bestDistance = 3;
+            foreach ($declared as $candidate) {
+                $d = levenshtein($name, $candidate);
+                // Short names need the distance to leave most of the name intact.
+                if ($d < $bestDistance && $d <= strlen($candidate) - 2) {
+                    $best = $candidate;
+                    $bestDistance = $d;
+                }
+            }
+            if ($best !== null) {
+                $hints[] = "$name is set but not declared; did you mean $best?";
+            }
+        }
+        return $hints;
     }
 }

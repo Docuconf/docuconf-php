@@ -110,7 +110,7 @@ final class SpecValidator
         ];
         foreach ($only as $field => $types) {
             if ($v->{$field} !== null && !in_array($v->type, $types, true)) {
-                $p[] = "$field does not apply to a {$v->type} variable";
+                $p[] = "$field does not apply to " . self::article($v->type) . " {$v->type} variable";
             }
         }
         if ($v->pattern !== null && ($err = Re2::check($v->pattern)) !== null) {
@@ -270,5 +270,11 @@ final class SpecValidator
                 break;
         }
         return $p;
+    }
+
+    /** "a" or "an", for messages: "an int variable", "a string variable". */
+    public static function article(string $word): string
+    {
+        return in_array(strtolower($word[0] ?? ''), ['a', 'e', 'i', 'o', 'u'], true) ? 'an' : 'a';
     }
 }

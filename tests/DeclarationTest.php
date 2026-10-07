@@ -152,6 +152,9 @@ final class DeclarationTest extends TestCase
         yield 'backreference' => [fn (Declaration $d) => $d->ifPresent('CODE')->pattern('(a)\1')->describe('Some code'), 'backreferences are not RE2'];
         yield 'itemMin on strings' => [fn (Declaration $d) => $d->ifPresent('L')->isList()->itemsBetween(0, 1)->describe('Some list'), 'only apply to a list of int'];
         yield 'bad duration default' => [fn (Declaration $d) => $d->ifPresent('T')->isDuration()->default('soon')->describe('A timeout'), 'not a Go duration'];
+        yield 'bad iso8601 default' => [fn (Declaration $d) => $d->ifPresent('T')->isDuration('iso8601')->default('soon')->describe('A timeout'), 'write it as in the env (iso8601, such as PT30S) or in Go form (30s)'];
+        yield 'an int' => [fn (Declaration $d) => $d->ifPresent('N')->isInteger()->minLength(1)->describe('A number'), 'minLength does not apply to an int variable'];
+        yield 'an enum' => [fn (Declaration $d) => $d->ifPresent('E')->allowedValues(['a'])->schemes('https')->describe('A choice'), 'schemes does not apply to an enum variable'];
         yield 'watch' => [fn (Declaration $d) => $d->text('license', '/etc/app/license/key')->reload('watch')->describe('Licence key'), 'reload "watch" is not supported'];
         yield 'reserved mount' => [fn (Declaration $d) => $d->text('license', '/etc/license.key')->describe('Licence key'), 'hiding what the image has'];
         yield 'passwordVar not secret' => [function (Declaration $d) {
@@ -177,6 +180,21 @@ final class DeclarationTest extends TestCase
         }
     }
 
+    public function testDurationDefaultsAndBoundsTakeTheDeclaredEncoding(): void
+    {
+        $d = Env::declare('svc');
+        $d->ifPresent('ISO')->isDuration('iso8601')->between('PT1S', 'PT5M')->default('PT30S')->describe('A timeout');
+        $d->ifPresent('SECS')->isDuration('seconds')->between('1', '300')->default('30')->describe('A timeout');
+        $d->ifPresent('SPAN')->isDuration('timespan')->default('00:00:30')->describe('A timeout');
+        $d->ifPresent('GO_FORM')->isDuration('iso8601')->default('30s')->describe('A timeout');
+        $values = $d->load([]);
+        foreach (['ISO', 'SECS', 'SPAN', 'GO_FORM'] as $name) {
+            self::assertEquals(Duration::ofSeconds(30), $values->duration($name), $name);
+        }
+        // The contract keeps the Go form.
+        self::assertStringContainsString("encoding:    \"iso8601\"\n\t\t\tmin:         \"1s\"\n\t\t\tmax:         \"5m\"\n\t\t\tdefault:     \"30s\"", $d->export());
+    }
+
     public function testFeatureFlagWarning(): void
     {
         $env = Env::declare('svc');
@@ -198,15 +216,18 @@ final class DeclarationTest extends TestCase
         file_put_contents("$dir/.env", "DOCUCONF_T_A=from-file\nDOCUCONF_T_B=from-file\n");
         putenv('DOCUCONF_T_B=from-env');
         try {
-            $env = Env::createImmutable($dir, 'svc');
+            $env = Env::declare('svc')->withDotenv($dir);
             $env->ifPresent('DOCUCONF_T_A')->describe('Set by the .env file');
             $env->ifPresent('DOCUCONF_T_B')->describe('Set by the environment');
             $values = $env->load();
             self::assertSame('from-file', $values->string('DOCUCONF_T_A'));
             self::assertSame('from-env', $values->string('DOCUCONF_T_B'));
+            // The file is read into docuconf only; the process environment is untouched.
+            self::assertArrayNotHasKey('DOCUCONF_T_A', $_ENV);
+            self::assertArrayNotHasKey('DOCUCONF_T_A', $_SERVER);
+            self::assertFalse(getenv('DOCUCONF_T_A'));
         } finally {
             putenv('DOCUCONF_T_B');
-            unset($_ENV['DOCUCONF_T_A'], $_SERVER['DOCUCONF_T_A']);
             unlink("$dir/.env");
             rmdir($dir);
         }
