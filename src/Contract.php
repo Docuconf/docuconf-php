@@ -139,6 +139,8 @@ final class Contract
         $s->maxItems = self::intOrNull($v['maxItems'] ?? null);
         $s->itemMin = self::intOrNull($v['itemMin'] ?? null);
         $s->itemMax = self::intOrNull($v['itemMax'] ?? null);
+        $s->itemMinLength = self::intOrNull($v['itemMinLength'] ?? null);
+        $s->itemMaxLength = self::intOrNull($v['itemMaxLength'] ?? null);
         if (isset($v['schema']) && is_array($v['schema'])) {
             $s->schema = $v['schema'];
         } elseif (isset($v['schema']) && $v['schema'] instanceof \stdClass) {
