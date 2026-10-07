@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3", "8.4"]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The contract meta-schema (spec/cue) and the shared conformance suite
+      # (conformance/cases.json) live in docuconf-go.
+      - uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, openssl, json
+          coverage: none
+          tools: composer:v2
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install cue
+        run: go install cuelang.org/go/cmd/cue@v0.17.1
+
+      - name: Install
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Lint
+        if: matrix.php == '8.3'
+        run: vendor/bin/phpcs
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+      # Includes the conformance suite (tests/ConformanceTest.php) and cue vet
+      # of the golden export (tests/ExportTest.php); both fail rather than skip here.
+      - name: PHPUnit
+        run: vendor/bin/phpunit
+        env:
+          DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
+          DOCUCONF_REQUIRE_VET: "1"
+          DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
+          DOCUCONF_REQUIRE_CONFORMANCE: "1"
+
+      - name: Golden export passes the meta-schema
+        run: |
+          mod="$(mktemp -d)"
+          cp -r docuconf-go/spec/cue/cue.mod docuconf-go/spec/cue/contract "$mod/"
+          mkdir "$mod/svc"
+          cp tests/golden/sample_gateway.cue "$mod/svc/"
+          cd "$mod" && cue vet -c ./svc
+
+  # The examples build against this repository's SDK (a Composer path repository).
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [orders, orders-symfony]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: docuconf/docuconf-go
+          path: docuconf-go
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: mbstring, openssl, json
+          coverage: none
+          tools: composer:v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Install cue
+        run: go install cuelang.org/go/cmd/cue@v0.17.1
+      - name: Build
+        working-directory: examples/${{ matrix.example }}
+        run: composer update --no-interaction --no-progress --prefer-dist
+      # contract.cue is generated; it must match what the app exports today.
+      - name: Contract is up to date
+        working-directory: examples/${{ matrix.example }}
+        run: |
+          if [ -f artisan ]; then
+            php artisan docuconf:export --output=contract.cue --check
+          else
+            bin/console docuconf:export --output=contract.cue --check
+          fi
+      - name: Contract passes the meta-schema
+        run: |
+          mod="$(mktemp -d)"
+          cp -r docuconf-go/spec/cue/cue.mod docuconf-go/spec/cue/contract "$mod/"
+          mkdir "$mod/app"
+          cp examples/${{ matrix.example }}/contract.cue "$mod/app/"
+          cd "$mod" && cue vet -c ./app
+      - name: Smoke test
+        run: examples/${{ matrix.example }}/smoke.sh
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer:v2
+      - run: composer validate --strict --no-check-lock
+      # Install the package as an app would, from a clean project, and run its CLI.
+      - name: Install as a dependency
+        run: |
+          app="$(mktemp -d)"
+          cd "$app"
+          composer init --no-interaction --name=smoke/app --stability=dev
+          composer config repositories.docuconf path "$GITHUB_WORKSPACE"
+          composer require --no-interaction "docuconf/docuconf:*@dev"
+          vendor/bin/docuconf --version

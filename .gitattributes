@@ -1,0 +1,10 @@
+# Keep the Packagist dist small: what an app needs, not the repo's tests and tooling.
+/.github export-ignore
+/examples export-ignore
+/tests export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/phpunit.xml.dist export-ignore
+/phpstan.neon.dist export-ignore
+/phpcs.xml.dist export-ignore
+/RELEASING.md export-ignore

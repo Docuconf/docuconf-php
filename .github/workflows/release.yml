@@ -1,0 +1,39 @@
+name: Release
+
+# Packagist publishes tags itself, through the GitHub webhook set up when the
+# package was submitted (see RELEASING.md). This workflow checks the tag and
+# creates the GitHub release; nothing here uploads the package.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: composer:v2
+      - name: Tag matches Version::VERSION
+        run: |
+          version="$(php -r 'require "src/Version.php"; echo Docuconf\Version::VERSION;')"
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Version::VERSION $version" >&2; exit 1; }
+      - run: composer validate --strict --no-check-lock
+      - run: composer update --no-interaction --no-progress --prefer-dist && vendor/bin/phpunit
+      - name: GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # Only needed if the Packagist webhook is missing: set the PACKAGIST_USERNAME
+      # variable and PACKAGIST_TOKEN secret, and this asks Packagist to update.
+      - name: Nudge Packagist
+        if: vars.PACKAGIST_USERNAME != ''
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            "https://packagist.org/api/update-package?username=${{ vars.PACKAGIST_USERNAME }}&apiToken=${{ secrets.PACKAGIST_TOKEN }}" \
+            -d '{"repository":{"url":"https://github.com/docuconf/docuconf-php"}}'
