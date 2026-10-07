@@ -7,7 +7,13 @@ declare(strict_types=1);
 // environment against it. A declaration file is a PHP file that returns a
 // Docuconf\Declaration (see README).
 
-foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+// Composer 2.2+ tells bin proxies where the autoloader is, which also covers
+// path repositories, where this file is symlinked rather than copied into vendor/.
+$candidates = [__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'];
+if (isset($GLOBALS['_composer_autoload_path'])) {
+    array_unshift($candidates, $GLOBALS['_composer_autoload_path']);
+}
+foreach ($candidates as $autoload) {
     if (is_file($autoload)) {
         require $autoload;
         break;
