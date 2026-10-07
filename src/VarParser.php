@@ -160,7 +160,7 @@ final class VarParser
                 try {
                     return Duration::parse($raw, $encoding);
                 } catch (InvalidArgumentException $e) {
-                    throw new ParseFailure('invalid_type', $e->getMessage() . " ($encoding encoding)" . $got);
+                    throw new ParseFailure('invalid_type', 'is ' . $e->getMessage() . $got);
                 }
             case 'list':
                 if ($spec->encoding() === 'json') {

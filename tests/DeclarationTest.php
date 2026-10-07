@@ -136,7 +136,7 @@ final class DeclarationTest extends TestCase
         $env->ifPresent('SHARDS')->isList('int')->itemsBetween(0, 7)->describe('Shard numbers');
         self::assertSame([0, 7], $env->load(['SHARDS' => '0,7'])->list('SHARDS'));
         self::assertSame([['var' => 'SHARDS', 'code' => 'out_of_range']], self::loadError($env, ['SHARDS' => '8'])->codes());
-        self::assertStringContainsString("itemMin: 0\n", $env->export());
+        self::assertMatchesRegularExpression('/itemMin: +0\n/', $env->export());
     }
 
     /** @return iterable<string, array{callable(Declaration): mixed, string}> */

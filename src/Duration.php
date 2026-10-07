@@ -283,7 +283,7 @@ final class Duration implements JsonSerializable, Stringable
             return 0;
         }
         if (strlen($digits) > 19 || (strlen($digits) === 19 && strcmp($digits, (string) PHP_INT_MAX) > 0)) {
-            throw new InvalidArgumentException('duration out of range');
+            throw new InvalidArgumentException('too long a duration for 64-bit nanoseconds');
         }
         return (int) $digits;
     }
@@ -291,7 +291,7 @@ final class Duration implements JsonSerializable, Stringable
     private static function mul(int $a, int $b): int
     {
         if ($a !== 0 && $b > intdiv(PHP_INT_MAX, $a)) {
-            throw new InvalidArgumentException('duration out of range');
+            throw new InvalidArgumentException('too long a duration for 64-bit nanoseconds');
         }
         return $a * $b;
     }
@@ -299,7 +299,7 @@ final class Duration implements JsonSerializable, Stringable
     private static function add(int $a, int $b): int
     {
         if ($a > PHP_INT_MAX - $b) {
-            throw new InvalidArgumentException('duration out of range');
+            throw new InvalidArgumentException('too long a duration for 64-bit nanoseconds');
         }
         return $a + $b;
     }
