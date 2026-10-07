@@ -6,6 +6,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,8 +26,11 @@ jobs:
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Version::VERSION $version" >&2; exit 1; }
       - run: composer validate --strict --no-check-lock
       - run: composer update --no-interaction --no-progress --prefer-dist && vendor/bin/phpunit
+      # release-please has usually created the release already.
       - name: GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
       # Only needed if the Packagist webhook is missing: set the PACKAGIST_USERNAME

@@ -8,5 +8,5 @@ namespace Docuconf;
 final class Version
 {
     public const SDK = 'docuconf/docuconf';
-    public const VERSION = '0.1.0';
+    public const VERSION = '0.1.0'; // x-release-please-version
 }
