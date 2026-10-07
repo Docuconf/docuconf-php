@@ -26,6 +26,20 @@ final class LoadResult
         return $this->violations === [];
     }
 
+    /**
+     * What var_dump(), print_r() and VarDumper show: secrets redacted.
+     *
+     * @return array{values: array<string, mixed>, violations: list<string>, warnings: list<string>}
+     */
+    public function __debugInfo(): array
+    {
+        return [
+            'values' => $this->values->redacted(),
+            'violations' => array_map(fn (Violation $v) => (string) $v, $this->violations),
+            'warnings' => $this->warnings,
+        ];
+    }
+
     /** The values, or a ConfigurationError holding every violation. */
     public function orThrow(): Values
     {

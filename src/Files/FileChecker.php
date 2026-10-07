@@ -101,7 +101,7 @@ final class FileChecker
                 if ($f->pattern !== null && !Re2::matches($f->pattern, $data)) {
                     return $fail('pattern_mismatch', 'does not match pattern ' . $f->pattern);
                 }
-                return [new LoadedFile($name, $path, $data, $data), []];
+                return [new LoadedFile($name, $path, $data, $data, $f->secret), []];
             default:
                 return [new LoadedFile($name, $path, null, null), []];
         }
@@ -171,6 +171,6 @@ final class FileChecker
                 return $fail('schema_mismatch', 'does not bind to ' . $f->class . ': ' . $e->getMessage());
             }
         }
-        return [new LoadedFile($f->name, $path, $data, $value), []];
+        return [new LoadedFile($f->name, $path, $data, $value, $f->secret), []];
     }
 }

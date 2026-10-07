@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Nightly against docuconf-go main; push and pull_request use .github/docuconf-go.ref.
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      docuconf_go_ref:
+        description: docuconf-go ref to test against (empty means .github/docuconf-go.ref)
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -18,11 +27,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          OVERRIDE: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$OVERRIDE" ]; then echo "ref=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+
       # The contract meta-schema (spec/cue) and the shared conformance suite
       # (conformance/cases.json) live in docuconf-go.
-      - uses: actions/checkout@v4
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
           path: docuconf-go
 
       - uses: shivammathur/setup-php@v2
@@ -60,6 +81,9 @@ jobs:
           DOCUCONF_CONFORMANCE: ${{ github.workspace }}/docuconf-go/conformance/cases.json
           DOCUCONF_REQUIRE_CONFORMANCE: "1"
 
+      - name: Run scripts/conformance.sh
+        run: DOCUCONF_GO_DIR="$GITHUB_WORKSPACE/docuconf-go" scripts/conformance.sh
+
       - name: Golden export passes the meta-schema
         run: |
           mod="$(mktemp -d)"
@@ -67,6 +91,34 @@ jobs:
           mkdir "$mod/svc"
           cp tests/golden/sample_gateway.cue "$mod/svc/"
           cd "$mod" && cue vet -c ./svc
+
+  # The Symfony integration on the Symfony versions apps use: the 6.4 LTS, 7.4
+  # and 8.x. The Laravel dev dependencies pin their own Symfony, so they are
+  # dropped here; the test job covers Laravel.
+  symfony:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {php: "8.2", symfony: "6.4.*"}
+          - {php: "8.3", symfony: "7.4.*"}
+          - {php: "8.4", symfony: "8.0.*"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, openssl, json, sodium
+          coverage: none
+          tools: composer:v2
+      - name: Install Symfony ${{ matrix.symfony }}
+        run: |
+          composer remove --dev --no-update --no-interaction orchestra/testbench illuminate/console illuminate/support
+          composer require --dev --no-update --no-interaction "symfony/console:${{ matrix.symfony }}" "symfony/framework-bundle:${{ matrix.symfony }}" "symfony/yaml:${{ matrix.symfony }}"
+          composer update --no-interaction --no-progress --prefer-dist --with-all-dependencies
+      - name: PHPUnit (Symfony)
+        run: vendor/bin/phpunit tests/Symfony
 
   # The examples build against this repository's SDK (a Composer path repository).
   examples:
@@ -77,9 +129,20 @@ jobs:
         example: [orders, orders-symfony]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - name: Pick the docuconf-go ref
+        id: dcref
+        env:
+          EVENT: ${{ github.event_name }}
+          OVERRIDE: ${{ inputs.docuconf_go_ref }}
+        run: |
+          if [ "$EVENT" = schedule ]; then echo "ref=main" >> "$GITHUB_OUTPUT"
+          elif [ -n "$OVERRIDE" ]; then echo "ref=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          else echo "ref=$(tr -d '[:space:]' < .github/docuconf-go.ref)" >> "$GITHUB_OUTPUT"; fi
+      - name: Check out docuconf-go
+        uses: actions/checkout@v4
         with:
           repository: docuconf/docuconf-go
+          ref: ${{ steps.dcref.outputs.ref }}
           path: docuconf-go
       - uses: shivammathur/setup-php@v2
         with:
@@ -126,12 +189,18 @@ jobs:
           php-version: "8.3"
           tools: composer:v2
       - run: composer validate --strict --no-check-lock
-      # Install the package as an app would, from a clean project, and run its CLI.
-      - name: Install as a dependency
+      # Install the package as the README says, from a clean project, and run its
+      # CLI. A path repository symlinks bin/docuconf, which once lost the autoloader.
+      - name: Install as a dependency (path repository)
         run: |
           app="$(mktemp -d)"
           cd "$app"
           composer init --no-interaction --name=smoke/app --stability=dev
           composer config repositories.docuconf path "$GITHUB_WORKSPACE"
-          composer require --no-interaction "docuconf/docuconf:*@dev"
+          composer require --no-interaction "docuconf/docuconf:@dev"
           vendor/bin/docuconf --version
+          printf '%s\n' '<?php' '$env = Docuconf\Env::declare("smoke");' \
+            '$env->ifPresent("PORT")->isInteger()->default(8080)->describe("HTTP listen port");' 'return $env;' > env.php
+          vendor/bin/docuconf export env.php -o contract.cue
+          grep -q 'PORT: {' contract.cue
+          PORT=0x vendor/bin/docuconf check env.php && exit 1 || test $? -eq 1

@@ -87,7 +87,8 @@ final class VarBuilder
 
     /**
      * The value used when the variable is unset: an int, float, bool,
-     * string, a Duration or Go duration string ("30s"), or a list.
+     * string, a list, or for a duration a Duration or a string in Go form
+     * ("30s") or in the variable's own encoding ("PT30S" for iso8601).
      */
     public function default(mixed $value): self
     {
@@ -207,6 +208,10 @@ final class VarBuilder
         return $this;
     }
 
+    /**
+     * The most characters (Unicode code points) a string, url or json value
+     * may hold. A json value is measured as received, before it is parsed.
+     */
     public function maxLength(int $n): self
     {
         $this->spec->maxLength = $n;
@@ -223,14 +228,14 @@ final class VarBuilder
         return $this;
     }
 
-    /** Lower bound: an int, a float, or a duration ("1s" or a Duration). */
+    /** Lower bound: an int, a float, or a duration ("1s", the variable's own encoding, or a Duration). */
     public function min(int|float|string|Duration $min): self
     {
         $this->rawMin = $min;
         return $this;
     }
 
-    /** Upper bound: an int, a float, or a duration ("5m" or a Duration). */
+    /** Upper bound: an int, a float, or a duration ("5m", the variable's own encoding, or a Duration). */
     public function max(int|float|string|Duration $max): self
     {
         $this->rawMax = $max;
@@ -269,6 +274,26 @@ final class VarBuilder
         return $this;
     }
 
+    /**
+     * The fewest characters (Unicode code points) each item of a string list
+     * may hold, measured after the list is split.
+     */
+    public function itemMinLength(int $n): self
+    {
+        $this->spec->itemMinLength = $n;
+        return $this;
+    }
+
+    /**
+     * The most characters (Unicode code points) each item of a string list
+     * may hold, measured after the list is split.
+     */
+    public function itemMaxLength(int $n): self
+    {
+        $this->spec->itemMaxLength = $n;
+        return $this;
+    }
+
     // --- finishing -----------------------------------------------------
 
     /**
@@ -282,20 +307,32 @@ final class VarBuilder
     {
         $s = $this->spec;
         $name = $s->name;
-        $duration = function (mixed $v, string $what) use ($name, &$problems): ?Duration {
+        $encoding = $s->encoding ?? 'go';
+        $example = ['go' => '30s', 'iso8601' => 'PT30S', 'seconds' => '30', 'timespan' => '00:00:30'][$encoding] ?? '30s';
+        $duration = function (mixed $v, string $what) use ($name, $encoding, $example, &$problems): ?Duration {
             if ($v instanceof Duration) {
                 return $v;
             }
             if (is_string($v)) {
+                // The Go form, as in the contract, or the form the variable's
+                // own encoding uses in the env ("PT30S" for iso8601).
                 try {
                     return Duration::fromGo($v);
-                } catch (\InvalidArgumentException $e) {
-                    $problems[] = "$name: $what \"$v\" is not a Go duration such as 1m30s";
-                    return null;
+                } catch (\InvalidArgumentException) {
                 }
+                if ($encoding !== 'go') {
+                    try {
+                        return Duration::parse($v, $encoding);
+                    } catch (\InvalidArgumentException) {
+                    }
+                }
+                $problems[] = $encoding === 'go'
+                    ? "$name: $what \"$v\" is not a Go duration such as 1m30s"
+                    : "$name: $what \"$v\" is not a duration: write it as in the env ($encoding, such as $example) or in Go form (30s)";
+                return null;
             }
             if (is_int($v)) {
-                $problems[] = "$name: $what for a duration must be a Go duration string, such as \"30s\", or a Duration";
+                $problems[] = "$name: $what for a duration must be a duration string, such as \"$example\", or a Duration";
             }
             return null;
         };
@@ -311,7 +348,7 @@ final class VarBuilder
         } else {
             foreach (['min' => $this->rawMin, 'max' => $this->rawMax] as $f => $raw) {
                 if (is_string($raw) || $raw instanceof Duration) {
-                    $problems[] = "$name: $f must be a number for a {$s->type} variable";
+                    $problems[] = "$name: $f must be a number for " . Spec\SpecValidator::article($s->type) . " {$s->type} variable";
                     $raw = null;
                 }
                 $s->{$f} = $s->type === 'float' && is_int($raw) ? (float) $raw : $raw;

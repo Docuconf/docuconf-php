@@ -47,22 +47,48 @@ final class Contract
             throw new DeclarationError(['contract must be a JSON object']);
         }
         $problems = [];
+        foreach (self::unknownKeys($contract, self::TOP_KEYS) as $key) {
+            $problems[] = in_array($key, ['overlays', 'profiles'], true)
+                ? "$key are not supported by docuconf-php yet; remove them, or load this contract with an SDK that supports them"
+                : self::unknown($key, self::TOP_KEYS, 'contract');
+        }
         if (($contract['kind'] ?? null) !== 'ConfigContract') {
             $problems[] = 'kind must be ConfigContract';
         }
         if (($contract['apiVersion'] ?? null) !== 'docuconf.dev/v1alpha1') {
             $problems[] = 'apiVersion must be docuconf.dev/v1alpha1';
         }
-        $meta = is_array($contract['metadata'] ?? null) ? $contract['metadata'] : [];
-        $spec = new ContractSpec((string) ($meta['name'] ?? ''), isset($meta['appVersion']) ? (string) $meta['appVersion'] : null);
-        foreach (self::map($contract['vars'] ?? []) as $name => $v) {
+        $meta = $contract['metadata'] ?? [];
+        if (!is_array($meta)) {
+            $problems[] = 'metadata must be an object';
+            $meta = [];
+        }
+        foreach (self::unknownKeys($meta, ['name', 'appVersion', 'generator']) as $key) {
+            $problems[] = self::unknown($key, ['name', 'appVersion', 'generator'], 'metadata');
+        }
+        if (isset($meta['generator'])) {
+            if (!is_array($meta['generator'])) {
+                $problems[] = 'metadata.generator must be an object';
+            } else {
+                foreach (self::unknownKeys($meta['generator'], ['language', 'sdk', 'version']) as $key) {
+                    $problems[] = self::unknown($key, ['language', 'sdk', 'version'], 'metadata.generator');
+                }
+            }
+        }
+        $name = $meta['name'] ?? '';
+        $appVersion = $meta['appVersion'] ?? null;
+        if (!is_string($name) || $appVersion !== null && !is_string($appVersion)) {
+            $problems[] = 'metadata.name and metadata.appVersion must be strings';
+        }
+        $spec = new ContractSpec(is_string($name) ? $name : '', is_string($appVersion) ? $appVersion : null);
+        foreach (self::map($contract['vars'] ?? [], 'vars', $problems) as $name => $v) {
             try {
                 $spec->vars[$name] = self::var((string) $name, $v);
             } catch (\InvalidArgumentException | \TypeError $e) {
                 $problems[] = "$name: " . $e->getMessage();
             }
         }
-        foreach (self::map($contract['files'] ?? []) as $name => $f) {
+        foreach (self::map($contract['files'] ?? [], 'files', $problems) as $name => $f) {
             try {
                 $spec->files[$name] = self::file((string) $name, $f);
             } catch (\InvalidArgumentException | \TypeError $e) {
@@ -83,20 +109,32 @@ final class Contract
      * @param array<string, string>|null $env
      * @throws ConfigurationError
      */
-    public function load(?array $env = null): Values
+    public function load(#[\SensitiveParameter] ?array $env = null): Values
     {
+        $processEnv = $env === null;
         $env ??= Environment::capture();
         $result = Loader::load($this->spec, $env);
         if (!$result->ok()) {
             $error = new ConfigurationError($result->violations);
-            TerminationLog::write($error->getMessage(), $env);
+            TerminationLog::write($error->getMessage(), $env, $processEnv);
             throw $error;
         }
         return $result->values;
     }
 
+    /**
+     * load(), but on any problem prints one line per problem to stderr,
+     * writes the termination log and exits 1, with no stack trace.
+     *
+     * @param array<string, string>|null $env
+     */
+    public function loadOrExit(#[\SensitiveParameter] ?array $env = null): Values
+    {
+        return Console::loadOrExit(fn () => $this->spec, $env ?? Environment::capture(), $env === null);
+    }
+
     /** @param array<string, string>|null $env */
-    public function check(?array $env = null): LoadResult
+    public function check(#[\SensitiveParameter] ?array $env = null): LoadResult
     {
         return Loader::load($this->spec, $env ?? Environment::capture());
     }
@@ -106,56 +144,128 @@ final class Contract
         return Exporter::toCue($this->spec, $package);
     }
 
-    /** @return array<string, array<string, mixed>> */
-    private static function map(mixed $m): array
+    private const TOP_KEYS = ['apiVersion', 'kind', 'metadata', 'vars', 'files'];
+
+    private const VAR_COMMON = ['name', 'type', 'description', 'required', 'secret', 'group', 'examples', 'configKey', 'deprecated', 'default'];
+
+    /** Every key some variable type takes; SpecValidator reports one used on the wrong type. */
+    private const VAR_KEYS = [
+        ...self::VAR_COMMON,
+        'minLength', 'maxLength', 'pattern', 'min', 'max', 'encoding', 'schemes', 'values',
+        'items', 'separator', 'minItems', 'maxItems', 'itemMin', 'itemMax', 'itemMinLength', 'itemMaxLength', 'schema',
+    ];
+
+    private const FILE_KEYS = [
+        'name', 'type', 'description', 'required', 'secret', 'path', 'pathEnv', 'reload', 'maxSize', 'group', 'deprecated',
+        'format', 'schema', 'dnsNames', 'keyAlgorithms', 'minRemaining', 'requireCA', 'minCertificates', 'passwordVar',
+        'pattern', 'minLength', 'maxLength',
+    ];
+
+    /**
+     * @param list<string> $problems
+     * @return array<string, array<string, mixed>>
+     */
+    private static function map(mixed $m, string $what, array &$problems): array
     {
-        if ($m instanceof \stdClass || !is_array($m)) {
+        if ($m instanceof \stdClass) {
             return [];
         }
-        return array_filter($m, 'is_array');
+        if (!is_array($m) || array_is_list($m) && $m !== []) {
+            $problems[] = "$what must be an object keyed by name";
+            return [];
+        }
+        $out = [];
+        foreach ($m as $name => $entry) {
+            if (!is_array($entry) || array_is_list($entry) && $entry !== []) {
+                $problems[] = ($what === 'files' ? 'file ' : '') . "$name: must be an object, got " . get_debug_type($entry);
+                continue;
+            }
+            $out[(string) $name] = $entry;
+        }
+        return $out;
+    }
+
+    /**
+     * @param array<array-key, mixed> $object
+     * @param list<string> $known
+     * @return list<string>
+     */
+    private static function unknownKeys(array $object, array $known): array
+    {
+        return array_values(array_diff(array_map('strval', array_keys($object)), $known));
+    }
+
+    /** @param list<string> $known */
+    private static function unknown(string $key, array $known, string $where): string
+    {
+        $hint = '';
+        foreach ($known as $k) {
+            if (levenshtein(strtolower($key), strtolower($k)) <= 2) {
+                $hint = "; did you mean \"$k\"?";
+                break;
+            }
+        }
+        return "unknown key \"$key\" in $where$hint";
     }
 
     /** @param array<string, mixed> $v */
     private static function var(string $name, array $v): VarSpec
     {
-        $s = new VarSpec($name);
-        $s->type = (string) ($v['type'] ?? '');
-        $s->description = (string) ($v['description'] ?? '');
-        $s->required = (bool) ($v['required'] ?? false);
-        $s->secret = (bool) ($v['secret'] ?? false);
-        $s->group = isset($v['group']) ? (string) $v['group'] : null;
-        $s->examples = isset($v['examples']) ? array_values(array_map('strval', (array) $v['examples'])) : null;
-        $s->configKey = isset($v['configKey']) ? (string) $v['configKey'] : null;
-        $s->deprecated = isset($v['deprecated']) && is_array($v['deprecated']) ? self::deprecated($v['deprecated']) : null;
-        $s->minLength = self::intOrNull($v['minLength'] ?? null);
-        $s->maxLength = self::intOrNull($v['maxLength'] ?? null);
-        $s->pattern = isset($v['pattern']) ? (string) $v['pattern'] : null;
-        $s->encoding = isset($v['encoding']) ? (string) $v['encoding'] : null;
-        $s->schemes = isset($v['schemes']) ? array_values(array_map('strval', (array) $v['schemes'])) : null;
-        $s->values = isset($v['values']) ? array_values(array_map('strval', (array) $v['values'])) : null;
-        $s->items = (string) ($v['items'] ?? 'string');
-        $s->separator = (string) ($v['separator'] ?? ',');
-        $s->minItems = self::intOrNull($v['minItems'] ?? null);
-        $s->maxItems = self::intOrNull($v['maxItems'] ?? null);
-        $s->itemMin = self::intOrNull($v['itemMin'] ?? null);
-        $s->itemMax = self::intOrNull($v['itemMax'] ?? null);
-        if (isset($v['schema']) && is_array($v['schema'])) {
-            $s->schema = $v['schema'];
-        } elseif (isset($v['schema']) && $v['schema'] instanceof \stdClass) {
-            $s->schema = [];
+        $unknown = self::unknownKeys($v, self::VAR_KEYS);
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException(implode(', ', array_map(fn ($k) => self::unknown($k, self::VAR_KEYS, 'the variable'), $unknown)));
         }
-        $bound = fn (mixed $x) => match ($s->type) {
-            'duration' => Duration::fromGo((string) $x),
-            'float' => (float) $x,
-            default => self::intOrNull($x),
+        if (isset($v['name']) && $v['name'] !== $name) {
+            throw new \InvalidArgumentException('name must be the key it is declared under');
+        }
+        $s = new VarSpec($name);
+        $s->type = self::str($v, 'type') ?? '';
+        $s->description = self::str($v, 'description') ?? '';
+        $s->required = self::bool($v, 'required') ?? false;
+        $s->secret = self::bool($v, 'secret') ?? false;
+        $s->group = self::str($v, 'group');
+        $s->examples = self::strings($v, 'examples');
+        $s->configKey = self::str($v, 'configKey');
+        $s->deprecated = self::deprecated($v);
+        $s->minLength = self::int($v, 'minLength');
+        $s->maxLength = self::int($v, 'maxLength');
+        $s->pattern = self::str($v, 'pattern');
+        $s->encoding = self::str($v, 'encoding');
+        $s->schemes = self::strings($v, 'schemes');
+        $s->values = self::strings($v, 'values');
+        $s->items = self::str($v, 'items') ?? 'string';
+        $s->separator = self::str($v, 'separator') ?? ',';
+        $s->minItems = self::int($v, 'minItems');
+        $s->maxItems = self::int($v, 'maxItems');
+        $s->itemMin = self::int($v, 'itemMin');
+        $s->itemMax = self::int($v, 'itemMax');
+        $s->itemMinLength = self::int($v, 'itemMinLength');
+        $s->itemMaxLength = self::int($v, 'itemMaxLength');
+        if (array_key_exists('schema', $v)) {
+            $s->schema = match (true) {
+                is_array($v['schema']) => $v['schema'],
+                $v['schema'] instanceof \stdClass => [],
+                default => throw new \InvalidArgumentException('schema must be an object (a JSON Schema)'),
+            };
+        }
+        $bound = function (string $key) use ($s, $v): int|float|Duration|null {
+            if (!array_key_exists($key, $v) || $v[$key] === null) {
+                return null;
+            }
+            $x = $v[$key];
+            return match ($s->type) {
+                'duration' => is_string($x) ? Duration::fromGo($x) : throw new \InvalidArgumentException("$key must be a Go duration string, such as \"30s\""),
+                'float' => is_int($x) || is_float($x) ? (float) $x : throw new \InvalidArgumentException("$key must be a number, got " . get_debug_type($x)),
+                default => self::int($v, $key),
+            };
         };
-        $s->min = isset($v['min']) ? $bound($v['min']) : null;
-        $s->max = isset($v['max']) ? $bound($v['max']) : null;
+        $s->min = $bound('min');
+        $s->max = $bound('max');
         if (array_key_exists('default', $v)) {
             $s->hasDefault = true;
             $d = $v['default'];
             $s->default = match ($s->type) {
-                'duration' => Duration::fromGo((string) $d),
+                'duration' => is_string($d) ? Duration::fromGo($d) : throw new \InvalidArgumentException('default must be a Go duration string, such as "30s"'),
                 'float' => is_int($d) ? (float) $d : $d,
                 default => $d,
             };
@@ -166,50 +276,119 @@ final class Contract
     /** @param array<string, mixed> $f */
     private static function file(string $name, array $f): FileSpec
     {
-        $s = new FileSpec($name, (string) ($f['type'] ?? ''));
-        $s->description = (string) ($f['description'] ?? '');
-        $s->required = (bool) ($f['required'] ?? false);
-        $s->secret = (bool) ($f['secret'] ?? $s->secret);
-        $s->path = (string) ($f['path'] ?? '');
-        $s->pathEnv = isset($f['pathEnv']) ? (string) $f['pathEnv'] : null;
-        $s->reload = (string) ($f['reload'] ?? 'restart');
-        $s->maxSize = self::intOrNull($f['maxSize'] ?? null);
-        $s->group = isset($f['group']) ? (string) $f['group'] : null;
-        $s->deprecated = isset($f['deprecated']) && is_array($f['deprecated']) ? self::deprecated($f['deprecated']) : null;
-        $s->format = isset($f['format']) ? (string) $f['format'] : null;
-        $s->schema = isset($f['schema']) && is_array($f['schema']) ? $f['schema'] : null;
-        $s->dnsNames = isset($f['dnsNames']) ? array_values(array_map('strval', (array) $f['dnsNames'])) : null;
-        $s->keyAlgorithms = isset($f['keyAlgorithms']) ? array_values(array_map('strval', (array) $f['keyAlgorithms'])) : null;
-        $s->minRemaining = isset($f['minRemaining']) ? Duration::fromGo((string) $f['minRemaining']) : null;
-        $s->requireCA = (bool) ($f['requireCA'] ?? false);
-        $s->minCertificates = self::intOrNull($f['minCertificates'] ?? null) ?? 1;
-        $s->passwordVar = isset($f['passwordVar']) ? (string) $f['passwordVar'] : null;
-        $s->pattern = isset($f['pattern']) ? (string) $f['pattern'] : null;
-        $s->minLength = self::intOrNull($f['minLength'] ?? null);
-        $s->maxLength = self::intOrNull($f['maxLength'] ?? null);
+        $unknown = self::unknownKeys($f, self::FILE_KEYS);
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException(implode(', ', array_map(fn ($k) => self::unknown($k, self::FILE_KEYS, 'the file input'), $unknown)));
+        }
+        if (isset($f['name']) && $f['name'] !== $name) {
+            throw new \InvalidArgumentException('name must be the key it is declared under');
+        }
+        $s = new FileSpec($name, self::str($f, 'type') ?? '');
+        $s->description = self::str($f, 'description') ?? '';
+        $s->required = self::bool($f, 'required') ?? false;
+        $s->secret = self::bool($f, 'secret') ?? $s->secret;
+        $s->path = self::str($f, 'path') ?? '';
+        $s->pathEnv = self::str($f, 'pathEnv');
+        $s->reload = self::str($f, 'reload') ?? 'restart';
+        $s->maxSize = self::int($f, 'maxSize');
+        $s->group = self::str($f, 'group');
+        $s->deprecated = self::deprecated($f);
+        $s->format = self::str($f, 'format');
+        if (array_key_exists('schema', $f)) {
+            $s->schema = match (true) {
+                is_array($f['schema']) => $f['schema'],
+                $f['schema'] instanceof \stdClass => [],
+                default => throw new \InvalidArgumentException('schema must be an object (a JSON Schema)'),
+            };
+        }
+        $s->dnsNames = self::strings($f, 'dnsNames');
+        $s->keyAlgorithms = self::strings($f, 'keyAlgorithms');
+        $minRemaining = self::str($f, 'minRemaining');
+        $s->minRemaining = $minRemaining === null ? null : Duration::fromGo($minRemaining);
+        $s->requireCA = self::bool($f, 'requireCA') ?? false;
+        $s->minCertificates = self::int($f, 'minCertificates') ?? 1;
+        $s->passwordVar = self::str($f, 'passwordVar');
+        $s->pattern = self::str($f, 'pattern');
+        $s->minLength = self::int($f, 'minLength');
+        $s->maxLength = self::int($f, 'maxLength');
         return $s;
     }
 
     /**
-     * @param array<array-key, mixed> $d
-     * @return array{message: string, replacedBy?: string}
+     * @param array<string, mixed> $o
+     * @return array{message: string, replacedBy?: string}|null
      */
-    private static function deprecated(array $d): array
+    private static function deprecated(array $o): ?array
     {
-        $out = ['message' => (string) ($d['message'] ?? '')];
-        if (isset($d['replacedBy'])) {
-            $out['replacedBy'] = (string) $d['replacedBy'];
+        if (!isset($o['deprecated'])) {
+            return null;
+        }
+        $d = $o['deprecated'];
+        if (!is_array($d)) {
+            throw new \InvalidArgumentException('deprecated must be an object with a message');
+        }
+        foreach (self::unknownKeys($d, ['message', 'replacedBy']) as $key) {
+            throw new \InvalidArgumentException(self::unknown($key, ['message', 'replacedBy'], 'deprecated'));
+        }
+        $out = ['message' => self::str($d, 'message') ?? ''];
+        $replacedBy = self::str($d, 'replacedBy');
+        if ($replacedBy !== null) {
+            $out['replacedBy'] = $replacedBy;
         }
         return $out;
     }
 
-    private static function intOrNull(mixed $x): ?int
+    /** @param array<array-key, mixed> $o */
+    private static function str(array $o, string $key): ?string
     {
+        $x = $o[$key] ?? null;
+        if ($x !== null && !is_string($x)) {
+            throw new \InvalidArgumentException("$key must be a string, got " . get_debug_type($x));
+        }
+        return $x;
+    }
+
+    /**
+     * Strictly true or false: "no", "false" and 0 are mistakes, not false.
+     *
+     * @param array<array-key, mixed> $o
+     */
+    private static function bool(array $o, string $key): ?bool
+    {
+        $x = $o[$key] ?? null;
+        if ($x !== null && !is_bool($x)) {
+            throw new \InvalidArgumentException("$key must be true or false, got " . (is_string($x) ? "\"$x\"" : get_debug_type($x)));
+        }
+        return $x;
+    }
+
+    /** @param array<array-key, mixed> $o */
+    private static function int(array $o, string $key): ?int
+    {
+        $x = $o[$key] ?? null;
+        if ($x !== null && !is_int($x)) {
+            throw new \InvalidArgumentException("$key must be an integer, got " . get_debug_type($x));
+        }
+        return $x;
+    }
+
+    /**
+     * @param array<array-key, mixed> $o
+     * @return list<string>|null
+     */
+    private static function strings(array $o, string $key): ?array
+    {
+        $x = $o[$key] ?? null;
         if ($x === null) {
             return null;
         }
-        if (!is_int($x)) {
-            throw new \InvalidArgumentException('expected an integer, got ' . get_debug_type($x));
+        if (!is_array($x) || !array_is_list($x)) {
+            throw new \InvalidArgumentException("$key must be a list of strings");
+        }
+        foreach ($x as $item) {
+            if (!is_string($item)) {
+                throw new \InvalidArgumentException("$key must be a list of strings, got an item of type " . get_debug_type($item));
+            }
         }
         return $x;
     }

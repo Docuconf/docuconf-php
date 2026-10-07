@@ -8,6 +8,7 @@ use Docuconf\Declaration;
 use Docuconf\DeclarationError;
 use Docuconf\Duration;
 use Docuconf\Environment;
+use Docuconf\Export\Exporter;
 use Docuconf\VarBuilder;
 use Docuconf\VarParser;
 
@@ -27,7 +28,11 @@ use Docuconf\VarParser;
  * as the service's contract.
  *
  * A value that fails its rules returns its default (or null) here; the
- * boot check is what reports it.
+ * boot check is what reports it, and commands that skip the check print a
+ * warning.
+ *
+ * Secret values come back as plain strings, as env() gives them, so
+ * `php artisan config:show` prints them like any env-backed config.
  */
 final class Env
 {
@@ -35,6 +40,8 @@ final class Env
     private static array $vars = [];
     /** @var list<\Closure(Declaration): void> */
     private static array $extra = [];
+    /** @var array<string, string> what each call returned, hashed */
+    private static array $fingerprints = [];
 
     public static function string(
         string $name,
@@ -152,9 +159,15 @@ final class Env
         array $schemes = [],
         bool $secret = false,
         ?string $group = null,
+        ?int $maxLength = null,
     ): ?string {
         /** @var ?string */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, fn (VarBuilder $v) => $v->isUrl(...$schemes));
+        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($schemes, $maxLength) {
+            $v->isUrl(...$schemes);
+            if ($maxLength !== null) {
+                $v->maxLength($maxLength);
+            }
+        });
     }
 
     /**
@@ -191,9 +204,11 @@ final class Env
         ?int $itemMin = null,
         ?int $itemMax = null,
         ?string $group = null,
+        ?int $itemMinLength = null,
+        ?int $itemMaxLength = null,
     ): ?array {
         /** @var list<string|int>|null */
-        return self::declareVar($name, $description, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax) {
+        return self::declareVar($name, $description, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax, $itemMinLength, $itemMaxLength) {
             $v->isList($items, $encoding, $separator);
             if ($minItems !== null) {
                 $v->minItems($minItems);
@@ -203,6 +218,12 @@ final class Env
             }
             if ($itemMin !== null || $itemMax !== null) {
                 $v->itemsBetween($itemMin, $itemMax);
+            }
+            if ($itemMinLength !== null) {
+                $v->itemMinLength($itemMinLength);
+            }
+            if ($itemMaxLength !== null) {
+                $v->itemMaxLength($itemMaxLength);
             }
         });
     }
@@ -221,8 +242,14 @@ final class Env
         bool $required = false,
         bool $secret = false,
         ?string $group = null,
+        ?int $maxLength = null,
     ): mixed {
-        return self::declareVar($name, $description, $required, $secret, $group, $default, fn (VarBuilder $v) => $v->isJson($schema));
+        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($schema, $maxLength) {
+            $v->isJson($schema);
+            if ($maxLength !== null) {
+                $v->maxLength($maxLength);
+            }
+        });
     }
 
     /**
@@ -268,6 +295,26 @@ final class Env
     {
         self::$vars = [];
         self::$extra = [];
+        self::$fingerprints = [];
+    }
+
+    /**
+     * A hash of what each Env:: call returned, by name. `config:cache`
+     * stores it, so the boot check can tell when cached values are not what
+     * the environment gives now. Hashed, so secrets do not show in
+     * `config:show docuconf`.
+     *
+     * @return array<string, string>
+     */
+    public static function fingerprints(): array
+    {
+        return self::$fingerprints;
+    }
+
+    /** @internal */
+    public static function fingerprint(mixed $value): string
+    {
+        return hash('sha256', serialize(Exporter::plain($value)));
     }
 
     /**
@@ -297,12 +344,39 @@ final class Env
 
         // Check this one declaration now, so a mistake points at its config file.
         $single = new Declaration('config');
-        $apply($single);
-        $spec = $single->spec()->vars[$name] ?? throw new DeclarationError(["$name: not declared"]);
+        try {
+            $apply($single);
+            $spec = $single->spec()->vars[$name] ?? throw new DeclarationError(["$name: not declared"]);
+        } catch (DeclarationError $e) {
+            $at = self::callSite();
+            throw new DeclarationError(array_map(fn (string $p) => $at . $p, $e->problems));
+        }
         [, $value, $violation] = VarParser::read($spec, Environment::capture());
         if ($violation !== null) {
-            return $spec->hasDefault ? $spec->default : null;
+            $value = $spec->hasDefault ? $spec->default : null;
         }
+        self::$fingerprints[$name] = self::fingerprint($value);
         return $value;
+    }
+
+    /** "config/orders.php:10: ", the config file line that called Env::. */
+    private static function callSite(): string
+    {
+        foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8) as $frame) {
+            $file = $frame['file'] ?? null;
+            if ($file === null || $file === __FILE__) {
+                continue;
+            }
+            try {
+                $base = function_exists('base_path') ? rtrim((string) base_path(), '/') . '/' : '';
+            } catch (\Throwable) {
+                $base = '';
+            }
+            if ($base !== '' && $base !== '/' && str_starts_with($file, $base)) {
+                $file = substr($file, strlen($base));
+            }
+            return $file . ':' . ($frame['line'] ?? 0) . ': ';
+        }
+        return '';
     }
 }

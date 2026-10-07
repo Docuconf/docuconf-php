@@ -97,20 +97,21 @@ final class SpecValidator
         if ($v->deprecated !== null && isset($v->deprecated['replacedBy']) && !preg_match(self::ENV_NAME, $v->deprecated['replacedBy'])) {
             $p[] = 'deprecated.replacedBy must be a variable name';
         }
-        foreach (['minLength', 'maxLength', 'minItems', 'maxItems'] as $field) {
+        foreach (['minLength', 'maxLength', 'minItems', 'maxItems', 'itemMinLength', 'itemMaxLength'] as $field) {
             if ($v->{$field} !== null && $v->{$field} < 0) {
                 $p[] = "$field cannot be negative";
             }
         }
         $only = [
-            'minLength' => ['string'], 'maxLength' => ['string'], 'pattern' => ['string'],
+            'minLength' => ['string'], 'maxLength' => ['string', 'url', 'json'], 'pattern' => ['string'],
             'min' => ['int', 'float', 'duration'], 'max' => ['int', 'float', 'duration'],
             'schemes' => ['url'], 'values' => ['enum'], 'minItems' => ['list'], 'maxItems' => ['list'],
-            'itemMin' => ['list'], 'itemMax' => ['list'], 'schema' => ['json'], 'encoding' => ['duration', 'list'],
+            'itemMin' => ['list'], 'itemMax' => ['list'], 'itemMinLength' => ['list'], 'itemMaxLength' => ['list'],
+            'schema' => ['json'], 'encoding' => ['duration', 'list'],
         ];
         foreach ($only as $field => $types) {
             if ($v->{$field} !== null && !in_array($v->type, $types, true)) {
-                $p[] = "$field does not apply to a {$v->type} variable";
+                $p[] = "$field does not apply to " . self::article($v->type) . " {$v->type} variable";
             }
         }
         if ($v->pattern !== null && ($err = Re2::check($v->pattern)) !== null) {
@@ -166,6 +167,12 @@ final class SpecValidator
                 }
                 if (($v->itemMin !== null || $v->itemMax !== null) && $v->items !== 'int') {
                     $p[] = 'itemMin and itemMax only apply to a list of int items';
+                }
+                if (($v->itemMinLength !== null || $v->itemMaxLength !== null) && $v->items !== 'string') {
+                    $p[] = 'itemMinLength and itemMaxLength only apply to a list of string items';
+                }
+                if ($v->itemMinLength !== null && $v->itemMaxLength !== null && $v->itemMinLength > $v->itemMaxLength) {
+                    $p[] = 'itemMinLength is greater than itemMaxLength';
                 }
                 if ($v->minItems !== null && $v->maxItems !== null && $v->minItems > $v->maxItems) {
                     $p[] = 'minItems is greater than maxItems';
@@ -227,6 +234,10 @@ final class SpecValidator
         if (($f->type === 'tls' || $f->type === 'keystore') && !$f->secret) {
             $p[] = "a {$f->type} input is always secret";
         }
+        $needsOpenssl = in_array($f->type, ['tls', 'caBundle'], true) || $f->type === 'keystore' && $f->format === 'pkcs12';
+        if ($needsOpenssl && !extension_loaded('openssl')) {
+            $p[] = "checking a {$f->type} input needs PHP's openssl extension";
+        }
         switch ($f->type) {
             case 'config':
                 if (!in_array($f->format, ['json', 'yaml', 'toml'], true)) {
@@ -270,5 +281,11 @@ final class SpecValidator
                 break;
         }
         return $p;
+    }
+
+    /** "a" or "an", for messages: "an int variable", "a string variable". */
+    public static function article(string $word): string
+    {
+        return in_array(strtolower($word[0] ?? ''), ['a', 'e', 'i', 'o', 'u'], true) ? 'an' : 'a';
     }
 }

@@ -42,4 +42,24 @@ for code in missing_required out_of_range; do
 done
 echo "bad env: exited non-zero with:"
 sed 's/^/  /' "$tmp/bad.txt"
+
+# 3. Any command that runs the app validates too, not only serve.
+if PORT=0 DATABASE_URL="$secret" "$php" artisan migrate:status >"$tmp/cmd.txt" 2>&1; then
+  echo "migrate:status ran with PORT=0" >&2; exit 1
+fi
+grep -q 'PORT \[out_of_range\]' "$tmp/cmd.txt" || { echo "migrate:status output lacks the report:" >&2; cat "$tmp/cmd.txt" >&2; exit 1; }
+echo "migrate:status with PORT=0: refused"
+
+# 4. A config cache built before the real environment existed (as in an image
+# build) is caught: the app would read the cached values, not the env.
+trap 'stop; "$php" artisan config:clear >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
+DATABASE_URL= PORT= "$php" artisan config:cache >/dev/null
+if PORT=$port DATABASE_URL="$secret" "$php" artisan docuconf:check >"$tmp/stale.txt" 2>&1; then
+  echo "docuconf:check passed with a stale config cache" >&2; exit 1
+fi
+grep -q 'config cache is stale' "$tmp/stale.txt" || { echo "docuconf:check output lacks the stale-cache report:" >&2; cat "$tmp/stale.txt" >&2; exit 1; }
+PORT=$port DATABASE_URL="$secret" "$php" artisan config:cache >/dev/null
+PORT=$port DATABASE_URL="$secret" "$php" artisan docuconf:check
+"$php" artisan config:clear >/dev/null
+echo "config:cache: a stale cache is refused, a fresh one passes"
 echo "smoke: ok"

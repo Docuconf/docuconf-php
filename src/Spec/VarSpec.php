@@ -33,7 +33,8 @@ final class VarSpec
     public bool $hasDefault = false;
     public mixed $default = null;
 
-    // string
+    // string; maxLength also bounds a url or a json value. Lengths count
+    // characters (Unicode code points), never bytes.
     public ?int $minLength = null;
     public ?int $maxLength = null;
     public ?string $pattern = null;
@@ -60,6 +61,9 @@ final class VarSpec
     public ?int $maxItems = null;
     public ?int $itemMin = null;
     public ?int $itemMax = null;
+    /** Bounds on the length of each item of a string list, in characters. */
+    public ?int $itemMinLength = null;
+    public ?int $itemMaxLength = null;
 
     // json
     /** @var array<string, mixed>|null */

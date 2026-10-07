@@ -21,13 +21,16 @@ $ cd examples/orders
 $ composer install
 ```
 
-This example installs the SDK from this repository (a Composer `path` repository). In your own app:
+This example installs the SDK from this repository (a Composer `path` repository). The package is not on
+Packagist yet, so in your own app install it from GitHub:
 
 ```console
-$ composer require docuconf/docuconf
+$ composer config repositories.docuconf vcs https://github.com/docuconf/docuconf-php
+$ composer require docuconf/docuconf:dev-main
 ```
 
-Laravel discovers the service provider; there is nothing to register.
+`composer require docuconf/docuconf` works once the first release is on Packagist. Laravel discovers the service
+provider; there is nothing to register.
 
 ## 2. Declare
 
@@ -38,8 +41,8 @@ use Docuconf\Laravel\Env;
 
 return [
     'port' => Env::int('PORT', 'HTTP listen port', default: 8080, min: 1, max: 65535),
-    'log_level' => Env::enum('LOG_LEVEL', 'Minimum log level', ['debug', 'info', 'warn', 'error'], default: 'info'),
-    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres'], secret: true),
+    'log_level' => Env::enum('ORDERS_LOG_LEVEL', 'Minimum level the orders code logs', ['debug', 'info', 'warn', 'error'], default: 'info'),
+    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true),
     'allowed_origins' => Env::list('ALLOWED_ORIGINS', 'Origins allowed to call the API (CORS)', default: ['http://localhost:3000'], minItems: 1),
     'request_timeout' => Env::duration('REQUEST_TIMEOUT', 'Timeout for each request', default: '30s', min: '1s', max: '5m'),
     'worker_count' => Env::int('WORKER_COUNT', 'Number of background workers', default: 4, min: 1, max: 64),
@@ -47,13 +50,14 @@ return [
 ```
 
 Each call returns the typed value, exactly where `env()` did: `config('orders.port')` is an `int`,
-`config('orders.request_timeout')` a `Docuconf\Duration`, `config('orders.allowed_origins')` an array.
+`config('orders.request_timeout')` a `Docuconf\Duration`, `config('orders.allowed_origins')` an array. The log
+level is `ORDERS_LOG_LEVEL` because Laravel's own `config/logging.php` already reads `LOG_LEVEL`, with other values.
 
 | Variable | Type | Rules |
 |---|---|---|
 | `PORT` | int | 1–65535, default `8080` |
-| `LOG_LEVEL` | enum | `debug`, `info`, `warn`, `error`; default `info` |
-| `DATABASE_URL` | url | secret, required, scheme `postgres` |
+| `ORDERS_LOG_LEVEL` | enum | `debug`, `info`, `warn`, `error`; default `info` |
+| `DATABASE_URL` | url | secret, required, scheme `postgres` or `postgresql` |
 | `ALLOWED_ORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
 | `REQUEST_TIMEOUT` | duration, Go syntax (`45s`, `1m30s`) | `1s`–`5m`, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
@@ -67,7 +71,7 @@ $ php artisan serve
 $ curl localhost:8080/healthz
 ok
 $ curl localhost:8080/config
-{"PORT":8080,"LOG_LEVEL":"info","DATABASE_URL":"***","ALLOWED_ORIGINS":["http:\/\/localhost:3000"],"REQUEST_TIMEOUT":"30s","WORKER_COUNT":4}
+{"PORT":8080,"ORDERS_LOG_LEVEL":"info","DATABASE_URL":"***","ALLOWED_ORIGINS":["http:\/\/localhost:3000"],"REQUEST_TIMEOUT":"30s","WORKER_COUNT":4}
 ```
 
 `php artisan serve` listens on `SERVER_PORT`, which `.env.example` sets to `${PORT}`. Real environment
@@ -85,16 +89,20 @@ docuconf: 2 configuration problems:
   - DATABASE_URL [missing_required]: required, but not set
 ```
 
-Secrets are never printed. With `LOG_LEVEL=verbose`, `DATABASE_URL=mysql://orders:hunter2@localhost/orders` and
+Secrets are never printed. With `ORDERS_LOG_LEVEL=verbose`, `DATABASE_URL=mysql://orders:hunter2@localhost/orders` and
 `REQUEST_TIMEOUT=30`:
 
 ```console
 $ php artisan serve
 docuconf: 3 configuration problems:
-  - LOG_LEVEL [not_in_enum]: must be one of: debug, info, warn, error (got "verbose")
-  - DATABASE_URL [invalid_scheme]: scheme must be one of: postgres
+  - ORDERS_LOG_LEVEL [not_in_enum]: must be one of: debug, info, warn, error (got "verbose")
+  - DATABASE_URL [invalid_scheme]: scheme must be one of: postgres, postgresql
   - REQUEST_TIMEOUT [invalid_type]: is not a Go duration, such as 1m30s (got "30")
 ```
+
+Every artisan command that runs the app checks the same way (`migrate`, `queue:work`, `tinker`, your own
+commands); only the ones in `docuconf.skip_commands` that do not run it (`config:cache`, `package:discover`, ...)
+skip the check, and they print a warning for each invalid value instead.
 
 The codes (`out_of_range`, `missing_required`, ...) are the same in every docuconf SDK. In Kubernetes the same
 text goes to `/dev/termination-log`, so `kubectl describe pod` shows it. `php artisan docuconf:check` prints the
@@ -122,3 +130,13 @@ Helm-based platform can use the [docuconf Helm chart](https://github.com/docucon
 instead. In the container, run `php artisan serve --host=0.0.0.0 --port="$PORT"` (or `php artisan docuconf:check`
 before your FPM or Octane server), so a value that slipped past the platform still stops the pod with the report
 above.
+
+Run `php artisan config:cache` when the container starts, not when the image is built: the app reads the cached
+values, and an image build has no real environment. docuconf records what each `Env::` call returned in the cache,
+and refuses to boot when the cache was built from other values:
+
+```console
+$ php artisan config:cache                     # in the Dockerfile: no DATABASE_URL yet
+$ php artisan docuconf:check                   # in the pod
+docuconf: config cache is stale: bootstrap/cache/config.php was built with other values of DATABASE_URL than the environment has now, and the app reads the cached ones; run `php artisan config:cache` at container start, not at build
+```
