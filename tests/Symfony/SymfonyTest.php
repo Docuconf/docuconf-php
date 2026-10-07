@@ -218,6 +218,14 @@ final class SymfonyTest extends TestCase
         self::assertStringContainsString('ORDERS_DATABASE_URL [missing_required]', $check->getDisplay());
     }
 
+    public function testCheckAnExplicitEnvMap(): void
+    {
+        $docuconf = $this->kernel()->getContainer()->get(Docuconf::class);
+        self::assertInstanceOf(Docuconf::class, $docuconf);
+        $result = $docuconf->check(['ORDERS_PORT' => '0', 'ORDERS_DATABASE_URL' => 'postgres://db/orders']);
+        self::assertSame(['ORDERS_PORT:out_of_range'], array_map(fn ($v) => "{$v->input}:{$v->code}", $result->violations));
+    }
+
     public function testDeclarationFile(): void
     {
         $file = dirname(__DIR__) . '/Fixtures/sample_gateway.php';

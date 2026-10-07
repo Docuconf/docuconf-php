@@ -157,9 +157,18 @@ final class Docuconf
         };
     }
 
-    /** Validates the environment (once) and returns every violation found, and warnings. */
-    public function check(): LoadResult
+    /**
+     * Validates the environment (once) and returns every violation found,
+     * and warnings. With an explicit $env map, as in a test, only the map is
+     * read, and nothing is cached.
+     *
+     * @param array<string, string>|null $env
+     */
+    public function check(#[\SensitiveParameter] ?array $env = null): LoadResult
     {
+        if ($env !== null) {
+            return Loader::load($this->spec(), $env);
+        }
         if ($this->result !== null) {
             return $this->result;
         }
