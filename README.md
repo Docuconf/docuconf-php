@@ -2,6 +2,8 @@
 
 Typed configuration contracts for PHP apps, on top of [vlucas/phpdotenv](https://github.com/vlucas/phpdotenv).
 
+Documentation: [docuconf.dev](https://docuconf.dev) · [PHP guide](https://docuconf.dev/languages/php/)
+
 - **Declare** every environment variable and file your app reads, in phpdotenv's style, with a type, rules and a
   description.
 - **Validate** them at boot: every problem at once, one line each, with stable codes, and never a secret value.
