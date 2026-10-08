@@ -159,15 +159,17 @@ jobs:
       - name: Build
         working-directory: examples/${{ matrix.example }}
         run: composer update --no-interaction --no-progress --prefer-dist
-      # contract.cue is generated; it must match what the app exports today.
+      # contract.cue is generated; it must match what the app exports today,
+      # except metadata.generator.version, which release PRs bump.
       - name: Contract is up to date
         working-directory: examples/${{ matrix.example }}
         run: |
           if [ -f artisan ]; then
-            php artisan docuconf:export --output=contract.cue --check
+            php artisan docuconf:export --output="$RUNNER_TEMP/contract.cue"
           else
-            bin/console docuconf:export --output=contract.cue --check
+            bin/console docuconf:export --output="$RUNNER_TEMP/contract.cue"
           fi
+          ../../scripts/check-generated.sh --files contract.cue "$RUNNER_TEMP/contract.cue"
       - name: Contract passes the meta-schema
         run: |
           mod="$(mktemp -d)"

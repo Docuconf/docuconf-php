@@ -16,12 +16,20 @@ the package from this GitHub repository; there is nothing to upload.
 
 ## Every release
 
-1. Make sure CI is green on `main`.
-2. Set `Version::VERSION` in `src/Version.php` (it is written into every exported contract's
-   `metadata.generator.version`), commit, and push.
-3. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
-4. `release.yml` checks the tag matches `Version::VERSION`, runs the tests, and creates the GitHub release.
-   Packagist picks up the tag through the webhook.
+Releases are automated with [release-please](https://github.com/googleapis/release-please); see
+[CONTRIBUTING.md](CONTRIBUTING.md#how-releases-happen) for the commit conventions it reads.
+
+1. Merge the open release PR (`chore(main): release X.Y.Z`). It already updates `Version::VERSION` in
+   `src/Version.php` and `CHANGELOG.md`. `composer.json` has no `version` field (Packagist takes versions from
+   tags), so release-please leaves its content alone, though the first release PR may reformat it. The golden file
+   and the example contracts do not need regenerating: their comparisons ignore `metadata.generator.version`.
+2. release-please tags the merge commit `vX.Y.Z` and creates the GitHub release with the changelog entries.
+3. `release.yml` checks the tag matches `Version::VERSION` and runs the tests; it keeps the release release-please
+   created. Packagist picks up the tag through the webhook.
+
+If the release PR was created with `GITHUB_TOKEN` (no release GitHub App configured), the tag does not trigger
+`release.yml` by itself, so `.github/workflows/release-please.yml` starts it with `gh workflow run`. To redo the
+checks by hand: `gh workflow run release.yml --ref vX.Y.Z`.
 
 Versions follow semver. While the contract format is `v1alpha1`, minor versions may change the declaration API.
 
