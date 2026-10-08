@@ -5,3 +5,4 @@
 /docuconf-go/
 /examples/*/vendor/
 /examples/*/composer.lock
+/dist/
