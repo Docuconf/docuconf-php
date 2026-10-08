@@ -320,10 +320,38 @@ final class ConfigTest extends KernelTestCase
 | `isList($items = 'string', $encoding = 'csv', $separator = ',')` | `list<string>` or `list<int>` | `minItems()`, `maxItems()`, `itemsBetween($min, $max)` (int items), `itemMinLength()`, `itemMaxLength()` (string items) |
 | `isJson(MyClass::class)` or `isJson($jsonSchema)` | an instance, or decoded JSON | the JSON Schema, `maxLength()` |
 
-Every variable also takes `describe()` (required, 5+ characters), `secret()`, `default()`, `group()`,
-`examples()`, `configKey()` and `deprecated()`. Mistakes in the declaration itself (a bad name, a short
-description, a constraint that does not fit the type, a default that breaks its own rules, a non-RE2 pattern)
-throw `Docuconf\DeclarationError` when the declaration is first used.
+Every variable also takes `describe()` (required, 5+ characters, unless a PHPDoc comment gives it), `details()`,
+`secret()`, `default()`, `group()`, `examples()`, `configKey()` and `deprecated()`. Mistakes in the declaration
+itself (a bad name, a short description, a constraint that does not fit the type, a default that breaks its own
+rules, a non-RE2 pattern) throw `Docuconf\DeclarationError` when the declaration is first used.
+
+### Descriptions and details
+
+The contract's `description` is a one-line summary; `details` is optional CommonMark (at most 4000 characters) on
+why the input exists and when to change it. Write both as the PHPDoc comment before the declaration, or before the
+config entry in Laravel. The first paragraph is the description, without its final period; the rest is the details:
+
+```php
+<?php
+/**
+ * Timeout for each request.
+ *
+ * Raise it when clients upload large batches. Keep it below the load balancer's idle timeout, or the client sees a
+ * reset rather than a `504`.
+ */
+$env->ifPresent('REQUEST_TIMEOUT')->isDuration()->default('30s');
+
+$env->ifPresent('WORKER_COUNT')->isInteger()->default(4)
+    ->describe('Number of background workers')->details('One per CPU core is a good start.');
+```
+
+`describe()` and `details()` (in Laravel, the description argument and `details:`; in Symfony YAML, the
+`details` key) set either one explicitly and win over the comment, which is read with PHP's tokenizer when the
+declaration is used. PHPDoc syntax becomes CommonMark: `{@link X}` and `{@see X}` become code spans (or links,
+for a URL), `@see` and `@link` tags a sentence, and other tags (`@var`, `@param`...) are dropped. Export fails
+when a description is missing or details are blank or longer than 4000 characters. Details are for docs only and
+never read at runtime. `docuconf docs` in the [docuconf CLI](https://github.com/docuconf/docuconf-go) generates
+`CONFIG.md` and `CONFIG.agents.md` from the exported contract.
 
 **Lengths** count characters, meaning Unicode code points (`mb_strlen($s, 'UTF-8')`), never bytes: `日本` is 2
 characters and `ZÜ01` fits an `itemMaxLength(4)`. `maxLength()` bounds a url as it is, and a json value as the app

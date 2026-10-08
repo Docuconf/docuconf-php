@@ -146,7 +146,7 @@ final class Contract
 
     private const TOP_KEYS = ['apiVersion', 'kind', 'metadata', 'vars', 'files'];
 
-    private const VAR_COMMON = ['name', 'type', 'description', 'required', 'secret', 'group', 'examples', 'configKey', 'deprecated', 'default'];
+    private const VAR_COMMON = ['name', 'type', 'description', 'details', 'required', 'secret', 'group', 'examples', 'configKey', 'deprecated', 'default'];
 
     /** Every key some variable type takes; SpecValidator reports one used on the wrong type. */
     private const VAR_KEYS = [
@@ -156,7 +156,7 @@ final class Contract
     ];
 
     private const FILE_KEYS = [
-        'name', 'type', 'description', 'required', 'secret', 'path', 'pathEnv', 'reload', 'maxSize', 'group', 'deprecated',
+        'name', 'type', 'description', 'details', 'required', 'secret', 'path', 'pathEnv', 'reload', 'maxSize', 'group', 'deprecated',
         'format', 'schema', 'dnsNames', 'keyAlgorithms', 'minRemaining', 'requireCA', 'minCertificates', 'passwordVar',
         'pattern', 'minLength', 'maxLength',
     ];
@@ -221,6 +221,7 @@ final class Contract
         $s = new VarSpec($name);
         $s->type = self::str($v, 'type') ?? '';
         $s->description = self::str($v, 'description') ?? '';
+        $s->details = self::str($v, 'details');
         $s->required = self::bool($v, 'required') ?? false;
         $s->secret = self::bool($v, 'secret') ?? false;
         $s->group = self::str($v, 'group');
@@ -285,6 +286,7 @@ final class Contract
         }
         $s = new FileSpec($name, self::str($f, 'type') ?? '');
         $s->description = self::str($f, 'description') ?? '';
+        $s->details = self::str($f, 'details');
         $s->required = self::bool($f, 'required') ?? false;
         $s->secret = self::bool($f, 'secret') ?? $s->secret;
         $s->path = self::str($f, 'path') ?? '';

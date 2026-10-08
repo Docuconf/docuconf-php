@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Docuconf\Spec;
 
+use Docuconf\Docs;
 use Docuconf\Duration;
 use Docuconf\Re2;
 use Docuconf\VarParser;
@@ -85,6 +86,7 @@ final class SpecValidator
         if (mb_strlen(trim($v->description)) < 5) {
             $p[] = 'needs a description of at least 5 characters';
         }
+        array_push($p, ...Docs::problems($v->details));
         if ($v->required && $v->hasDefault) {
             $p[] = 'a required variable cannot have a default; the platform must supply it';
         }
@@ -208,6 +210,7 @@ final class SpecValidator
         if (mb_strlen(trim($f->description)) < 5) {
             $p[] = 'needs a description of at least 5 characters';
         }
+        array_push($p, ...Docs::problems($f->details));
         if (!preg_match('#^/[A-Za-z0-9._/-]+$#D', $f->path) || preg_match('#(^|/)\.\.?(/|$)#', $f->path) || str_contains($f->path, '//') || str_ends_with($f->path, '/')) {
             $p[] = "path \"{$f->path}\" must be absolute and normalised";
         } else {

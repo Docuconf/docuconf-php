@@ -44,7 +44,15 @@ return [
     'log_level' => Env::enum('ORDERS_LOG_LEVEL', 'Minimum level the orders code logs', ['debug', 'info', 'warn', 'error'], default: 'info'),
     'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true),
     'allowed_origins' => Env::list('ALLOWED_ORIGINS', 'Origins allowed to call the API (CORS)', default: ['http://localhost:3000'], minItems: 1),
-    'request_timeout' => Env::duration('REQUEST_TIMEOUT', 'Timeout for each request', default: '30s', min: '1s', max: '5m'),
+
+    /**
+     * Timeout for each request.
+     *
+     * Raise it when clients upload large order batches. Keep it below the
+     * load balancer's idle timeout, or the client sees a reset rather than
+     * a `504`.
+     */
+    'request_timeout' => Env::duration('REQUEST_TIMEOUT', default: '30s', min: '1s', max: '5m'),
     'worker_count' => Env::int('WORKER_COUNT', 'Number of background workers', default: 4, min: 1, max: 64),
 ];
 ```
@@ -52,6 +60,8 @@ return [
 Each call returns the typed value, exactly where `env()` did: `config('orders.port')` is an `int`,
 `config('orders.request_timeout')` a `Docuconf\Duration`, `config('orders.allowed_origins')` an array. The log
 level is `ORDERS_LOG_LEVEL` because Laravel's own `config/logging.php` already reads `LOG_LEVEL`, with other values.
+`REQUEST_TIMEOUT` is documented by its PHPDoc comment: the first paragraph is its description, and the rest is
+exported as `details`, which `docuconf docs` renders into `CONFIG.md`.
 
 | Variable | Type | Rules |
 |---|---|---|

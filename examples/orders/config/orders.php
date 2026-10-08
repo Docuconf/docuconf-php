@@ -16,8 +16,18 @@ return [
 
     'allowed_origins' => Env::list('ALLOWED_ORIGINS', 'Origins allowed to call the API (CORS)', default: ['http://localhost:3000'], minItems: 1),
 
-    // A Docuconf\Duration; written "30s", "1m30s" in the env.
-    'request_timeout' => Env::duration('REQUEST_TIMEOUT', 'Timeout for each request', default: '30s', min: '1s', max: '5m'),
+    // A Docuconf\Duration; written "30s", "1m30s" in the env. The PHPDoc
+    // comment documents it: its first paragraph is the description, and the
+    // rest is exported as details, for `docuconf docs`.
+
+    /**
+     * Timeout for each request.
+     *
+     * Raise it when clients upload large order batches. Keep it below the
+     * load balancer's idle timeout, or the client sees a reset rather than
+     * a `504`.
+     */
+    'request_timeout' => Env::duration('REQUEST_TIMEOUT', default: '30s', min: '1s', max: '5m'),
 
     'worker_count' => Env::int('WORKER_COUNT', 'Number of background workers', default: 4, min: 1, max: 64),
 ];
