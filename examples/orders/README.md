@@ -42,7 +42,7 @@ use Docuconf\Laravel\Env;
 return [
     'port' => Env::int('PORT', 'HTTP listen port', default: 8080, min: 1, max: 65535),
     'log_level' => Env::enum('ORDERS_LOG_LEVEL', 'Minimum level the orders code logs', ['debug', 'info', 'warn', 'error'], default: 'info'),
-    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true),
+    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true, maxLength: 2048),
     'allowed_origins' => Env::list('ALLOWED_ORIGINS', 'Origins allowed to call the API (CORS)', default: ['http://localhost:3000'], minItems: 1),
 
     /**
@@ -67,7 +67,7 @@ exported as `details`, which `docuconf docs` renders into `CONFIG.md`.
 |---|---|---|
 | `PORT` | int | 1–65535, default `8080` |
 | `ORDERS_LOG_LEVEL` | enum | `debug`, `info`, `warn`, `error`; default `info` |
-| `DATABASE_URL` | url | secret, required, scheme `postgres` or `postgresql` |
+| `DATABASE_URL` | url | secret, required, scheme `postgres` or `postgresql`, at most 2048 characters |
 | `ALLOWED_ORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
 | `REQUEST_TIMEOUT` | duration, Go syntax (`45s`, `1m30s`) | `1s`–`5m`, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
@@ -130,6 +130,18 @@ docuconf: wrote contract.cue
 
 [`contract.cue`](contract.cue) is generated; never edit it by hand. CI re-exports it with `--check` and fails when
 the committed file is out of date.
+
+**Generated docs.** [`CONFIG.md`](CONFIG.md), the reference for developers, and
+[`CONFIG.agents.md`](CONFIG.agents.md), the rules and facts AI agents need, are generated from `contract.cue` by the
+`docuconf` CLI from [docuconf-go](https://github.com/docuconf/docuconf-go), through the docs model in
+[`docs.json`](docs.json). Never edit them by hand; regenerate them after exporting the contract (CI fails if they
+are out of date):
+
+```console
+$ docuconf docs contract.cue -o CONFIG.md
+$ docuconf docs contract.cue --format agents -o CONFIG.agents.md
+$ docuconf docs contract.cue --format model -o docs.json
+```
 
 ## 6. Deploy
 
