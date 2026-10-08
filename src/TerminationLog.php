@@ -7,18 +7,26 @@ namespace Docuconf;
 /**
  * Writes boot failures to the Kubernetes termination log, so
  * `kubectl describe pod` shows why the container stopped. The path is
- * /dev/termination-log when it exists, or DOCUCONF_TERMINATION_LOG.
+ * DOCUCONF_TERMINATION_LOG, or /dev/termination-log when it exists.
+ *
+ * A load from an explicit env map (a unit test) only writes when the map
+ * sets DOCUCONF_TERMINATION_LOG, so a failing test in a Kubernetes CI pod
+ * does not overwrite the pod's own termination message.
  */
 final class TerminationLog
 {
     public const DEFAULT_PATH = '/dev/termination-log';
 
-    /** @param array<string, string> $env */
-    public static function write(string $message, array $env): void
+    /**
+     * @param array<string, string> $env
+     * @param bool $processEnv whether $env is the process environment; when it
+     *        is an explicit map, only DOCUCONF_TERMINATION_LOG is written to
+     */
+    public static function write(string $message, #[\SensitiveParameter] array $env, bool $processEnv = true): void
     {
         $path = $env['DOCUCONF_TERMINATION_LOG'] ?? '';
         if ($path === '') {
-            if (!file_exists(self::DEFAULT_PATH)) {
+            if (!$processEnv || !file_exists(self::DEFAULT_PATH)) {
                 return;
             }
             $path = self::DEFAULT_PATH;

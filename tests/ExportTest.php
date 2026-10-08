@@ -9,6 +9,7 @@ use Docuconf\Declaration;
 use Docuconf\Env;
 use Docuconf\Export\Exporter;
 use Docuconf\Tests\Support\CueVet;
+use Docuconf\Tests\Support\Golden;
 use PHPUnit\Framework\TestCase;
 
 final class ExportTest extends TestCase
@@ -24,7 +25,20 @@ final class ExportTest extends TestCase
         if (getenv('DOCUCONF_UPDATE_GOLDEN') === '1') {
             file_put_contents($golden, self::fixture()->export());
         }
-        self::assertSame(file_get_contents($golden), self::fixture()->export());
+        self::assertSame(
+            Golden::withoutGeneratorVersion((string) file_get_contents($golden)),
+            Golden::withoutGeneratorVersion(self::fixture()->export()),
+        );
+    }
+
+    public function testGoldenComparisonIgnoresOnlyTheGeneratorVersion(): void
+    {
+        $cue = self::fixture()->export();
+        $bumped = (string) preg_replace('/(\bversion:\s*)"[^"]*"/', '$1"99.0.0"', $cue, 1);
+        self::assertNotSame($cue, $bumped);
+        self::assertSame(Golden::withoutGeneratorVersion($cue), Golden::withoutGeneratorVersion($bumped));
+        $renamed = str_replace('"HTTP listen port"', '"port"', $cue);
+        self::assertNotSame(Golden::withoutGeneratorVersion($cue), Golden::withoutGeneratorVersion($renamed));
     }
 
     public function testGoldenFilePassesTheMetaSchema(): void
@@ -87,7 +101,10 @@ final class ExportTest extends TestCase
         $fixture = __DIR__ . '/Fixtures/sample_gateway.php';
         exec(PHP_BINARY . ' ' . escapeshellarg($bin) . ' export ' . escapeshellarg($fixture) . ' -o ' . escapeshellarg($out) . ' 2>&1', $o, $code);
         self::assertSame(0, $code, implode("\n", $o));
-        self::assertSame(file_get_contents(__DIR__ . '/golden/sample_gateway.cue'), file_get_contents($out));
+        self::assertSame(
+            Golden::withoutGeneratorVersion((string) file_get_contents(__DIR__ . '/golden/sample_gateway.cue')),
+            Golden::withoutGeneratorVersion((string) file_get_contents($out)),
+        );
         exec(PHP_BINARY . ' ' . escapeshellarg($bin) . ' export ' . escapeshellarg($fixture) . ' -o ' . escapeshellarg($out) . ' --check 2>&1', $o, $code);
         self::assertSame(0, $code);
         file_put_contents($out, 'stale');

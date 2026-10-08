@@ -13,11 +13,17 @@ $candidates = [__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoloa
 if (isset($GLOBALS['_composer_autoload_path'])) {
     array_unshift($candidates, $GLOBALS['_composer_autoload_path']);
 }
+$found = null;
 foreach ($candidates as $autoload) {
     if (is_file($autoload)) {
-        require $autoload;
+        $found = $autoload;
         break;
     }
 }
+if ($found === null) {
+    fwrite(STDERR, "docuconf: cannot find the Composer autoloader (vendor/autoload.php); run composer install\n");
+    exit(1);
+}
+require $found;
 
 exit(Docuconf\Cli::main($argv, STDOUT, STDERR));

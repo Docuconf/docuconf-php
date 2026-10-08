@@ -5,26 +5,23 @@ declare(strict_types=1);
 namespace Docuconf\Symfony;
 
 use Docuconf\ConfigurationError;
+use Docuconf\Console;
 
 /**
- * Validates at kernel boot: on every web request boot, and for the console
- * commands that run the app (messenger:consume, ...). A failed console boot
- * prints one line per problem and exits 1, without a stack trace.
+ * Validates at kernel boot: on every web request boot, and for every
+ * console command except the ones in `docuconf.skip_commands`
+ * (cache:clear, assets:install, secrets:*, debug:*...), which do not run
+ * the app. A failed console boot prints one line per problem and exits 1,
+ * without a stack trace; a failed web boot throws a ConfigurationError,
+ * which Symfony logs once.
  */
 final class BootValidator
 {
-    /**
-     * How a failed console boot ends the process. Tests replace it.
-     *
-     * @var (\Closure(int): void)|null
-     */
-    public static ?\Closure $exitUsing = null;
-
-    /** @param list<string> $consoleCommands */
+    /** @param list<string> $skipCommands */
     public function __construct(
         private readonly Docuconf $docuconf,
         private readonly bool $enabled,
-        private readonly array $consoleCommands,
+        private readonly array $skipCommands,
     ) {
     }
 
@@ -33,26 +30,21 @@ final class BootValidator
         if (!$this->enabled) {
             return;
         }
-        $console = \PHP_SAPI === 'cli' || \PHP_SAPI === 'phpdbg';
-        if ($console) {
-            $argv = $_SERVER['argv'] ?? [];
-            if (!is_array($argv) || !in_array($argv[1] ?? null, $this->consoleCommands, true)) {
-                return;
-            }
+        $console = Console::isCli();
+        if ($console && Console::matches(Console::command(), $this->skipCommands)) {
+            return;
         }
         $result = $this->docuconf->boot();
+        if ($console) {
+            Console::warnings($result->warnings);
+        }
         if ($result->ok()) {
             return;
         }
-        $message = ConfigurationError::format($result->violations);
         if ($console) {
-            fwrite(STDERR, $message . "\n");
-            (self::$exitUsing ?? static function (int $code): void {
-                exit($code);
-            })(1);
+            Console::fail(ConfigurationError::format($result->violations), $this->docuconf->environment());
             return;
         }
-        error_log($message);
         throw new ConfigurationError($result->violations);
     }
 }

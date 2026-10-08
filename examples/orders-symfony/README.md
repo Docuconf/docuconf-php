@@ -2,14 +2,15 @@
 
 The [orders service](../orders) again, on Symfony: the same six variables, `GET /healthz` and `GET /config`
 (secret shown as `***`), declared in [`config/packages/docuconf.yaml`](config/packages/docuconf.yaml) and read
-with `%env(docuconf:NAME)%`, Symfony's own env-processor syntax.
+with `%env(docuconf:NAME)%`, Symfony's own env-processor syntax, or with the `Docuconf\Values` service
+(`GET /config` uses it).
 
 ```yaml
 docuconf:
     name: orders-symfony
     vars:
         PORT: {type: int, description: HTTP listen port, min: 1, max: 65535, default: 8080}
-        DATABASE_URL: {type: url, description: Orders database connection string, required: true, secret: true, schemes: [postgres]}
+        DATABASE_URL: {type: url, description: Orders database connection string, required: true, secret: true, schemes: [postgres, postgresql]}
         # ...
 
 parameters:
@@ -20,7 +21,7 @@ parameters:
 ## Run it
 
 ```console
-$ composer install
+$ composer install          # the SDK comes from this repository, through a Composer path repository
 $ export DATABASE_URL=postgres://orders:orders@localhost:5432/orders
 $ bin/console docuconf:check && php -S 127.0.0.1:8080 -t public
 docuconf: configuration ok
@@ -38,8 +39,14 @@ docuconf: 2 configuration problems:
   - DATABASE_URL [missing_required]: required, but not set
 ```
 
-In `prod` the container is cached: after changing `docuconf.yaml`, run `bin/console cache:clear` (or delete
-`var/cache`). [`smoke.sh`](smoke.sh) checks both runs.
+Every console command that runs the app (`messenger:consume`, your own commands) validates the same way at boot;
+`cache:clear`, `secrets:*`, `debug:*` and the other commands in `docuconf.skip_commands` do not. Values are read
+the way `%env(NAME)%` reads them, so a secret stored with `bin/console secrets:set DATABASE_URL` counts.
+
+A typo in `docuconf.yaml` is Symfony's own config error (`Unrecognized option "secert" under
+"docuconf.vars.DATABASE_URL"`), and `bin/console config:dump-reference docuconf` lists every key. In `prod` the
+container is cached: after changing `docuconf.yaml`, run `bin/console cache:clear` (or delete `var/cache`).
+[`smoke.sh`](smoke.sh) checks both runs.
 
 ## Export the contract
 

@@ -7,6 +7,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -35,6 +36,7 @@ jobs:
           mkdir -p dist
           composer archive --format=zip --dir=dist --file="$name"
           (cd dist && sha256sum "$name.zip" > "$name.zip.sha256" && cat "$name.zip.sha256")
+      # release-please has usually created the release already.
       - name: GitHub release
         run: |
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then

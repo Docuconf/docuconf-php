@@ -19,8 +19,8 @@ use Dotenv\Dotenv;
  * $env->required('DATABASE_URL')->isUrl('postgres')->secret()->describe('Primary Postgres connection string');
  * $env->ifPresent('PORT')->isInteger()->between(1, 65535)->default(8080)->describe('HTTP listen port');
  *
- * $config = $env->load();   // every problem at once, or a ConfigurationError
- * $config->int('PORT');     // 8080
+ * $config = $env->loadOrExit();   // or: one line per problem on stderr, exit 1
+ * $config->int('PORT');           // 8080
  * echo $env->export();      // contract.cue
  * ```
  */
@@ -32,7 +32,10 @@ final class Declaration
     private array $files = [];
     /** @var list<string> */
     private array $duplicates = [];
-    private ?Dotenv $dotenv = null;
+    /** @var string|list<string>|null */
+    private string|array|null $dotenvPaths = null;
+    /** @var string|list<string>|null */
+    private string|array|null $dotenvNames = null;
 
     public function __construct(private readonly string $name, private readonly ?string $appVersion = null)
     {
@@ -99,13 +102,27 @@ final class Declaration
     }
 
     /**
-     * Loads a `.env` file with phpdotenv before reading the environment, for
-     * local development. Real environment variables win over the file.
+     * Also reads `.env` files with phpdotenv, for local development:
+     * `Env::declare('orders')->withDotenv(__DIR__)`, or
+     * `->withDotenv(__DIR__, '.env.local')`. The arguments are those of
+     * `Dotenv::createImmutable($paths, $names)`. Real environment variables
+     * win over the files, and the files are read into docuconf only: $_ENV,
+     * $_SERVER and getenv() are left alone.
+     *
+     * @param string|list<string> $paths directories holding the files
+     * @param string|list<string>|null $names file names; ".env" when null
      */
-    public function withDotenv(Dotenv $dotenv): self
+    public function withDotenv(string|array $paths, string|array|null $names = null): self
     {
-        $this->dotenv = $dotenv;
+        $this->dotenvPaths = $paths;
+        $this->dotenvNames = $names;
         return $this;
+    }
+
+    /** Whether a variable of this name has been declared. */
+    public function has(string $name): bool
+    {
+        return isset($this->vars[$name]);
     }
 
     /**
@@ -141,23 +158,49 @@ final class Declaration
     }
 
     /**
+     * Validates the environment and files, and returns the typed values; on
+     * any problem, prints one line per problem to stderr, writes the
+     * Kubernetes termination log and exits with code 1, with no stack
+     * trace. The boot one-liner for an app's entry point:
+     *
+     * ```php
+     * $config = (require __DIR__ . '/../config/env.php')->loadOrExit();
+     * ```
+     *
+     * Warnings (deprecated variables, a misspelt variable name) go to stderr
+     * too. Secret values are never printed.
+     *
+     * @param array<string, string>|null $env the environment; the process environment when null
+     */
+    public function loadOrExit(#[\SensitiveParameter] ?array $env = null): Values
+    {
+        return Console::loadOrExit($this->spec(...), $env ?? $this->environment(), $env === null);
+    }
+
+    /**
      * Validates the environment and files, and returns the typed values.
      *
      * Every problem is reported together in one ConfigurationError, which
      * is also written to the Kubernetes termination log. Secret values are
-     * never printed.
+     * never printed. For an app's entry point, loadOrExit() reports without
+     * a stack trace.
+     *
+     * With an explicit $env map, as in a unit test, nothing outside the map
+     * is read, and the termination log is written only when the map sets
+     * DOCUCONF_TERMINATION_LOG.
      *
      * @param array<string, string>|null $env the environment; the process environment when null
      * @throws ConfigurationError
      * @throws DeclarationError
      */
-    public function load(?array $env = null): Values
+    public function load(#[\SensitiveParameter] ?array $env = null): Values
     {
+        $processEnv = $env === null;
         $env ??= $this->environment();
         $result = Loader::load($this->spec(), $env);
         if (!$result->ok()) {
             $error = new ConfigurationError($result->violations);
-            TerminationLog::write($error->getMessage(), $env);
+            TerminationLog::write($error->getMessage(), $env, $processEnv);
             throw $error;
         }
         return $result->values;
@@ -169,7 +212,7 @@ final class Declaration
      *
      * @param array<string, string>|null $env
      */
-    public function check(?array $env = null): LoadResult
+    public function check(#[\SensitiveParameter] ?array $env = null): LoadResult
     {
         return Loader::load($this->spec(), $env ?? $this->environment());
     }
@@ -181,14 +224,23 @@ final class Declaration
     }
 
     /**
-     * The process environment, after loading `.env` when withDotenv() was used.
+     * The process environment, plus the `.env` files given to withDotenv()
+     * for names the process environment does not set.
      *
      * @return array<string, string>
      */
     public function environment(): array
     {
-        $this->dotenv?->safeLoad();
-        return Environment::capture();
+        $env = Environment::capture();
+        if ($this->dotenvPaths !== null) {
+            $file = Dotenv::createArrayBacked($this->dotenvPaths, $this->dotenvNames)->safeLoad();
+            foreach ($file as $name => $value) {
+                if (is_string($value) && !array_key_exists($name, $env)) {
+                    $env[$name] = $value;
+                }
+            }
+        }
+        return $env;
     }
 
     private function var(string $name): VarBuilder
