@@ -4,7 +4,7 @@
     "type": "library",
     "license": "MIT",
     "keywords": ["configuration", "environment", "dotenv", "env", "contract", "cue", "kubernetes", "laravel", "symfony", "validation"],
-    "homepage": "https://github.com/docuconf/docuconf-php",
+    "homepage": "https://docuconf.dev/languages/laravel/",
     "support": {
         "issues": "https://github.com/docuconf/docuconf-php/issues",
         "source": "https://github.com/docuconf/docuconf-php"

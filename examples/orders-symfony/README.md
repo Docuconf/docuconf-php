@@ -10,7 +10,7 @@ docuconf:
     name: orders-symfony
     vars:
         PORT: {type: int, description: HTTP listen port, min: 1, max: 65535, default: 8080}
-        DATABASE_URL: {type: url, description: Orders database connection string, required: true, secret: true, schemes: [postgres, postgresql]}
+        DATABASE_URL: {type: url, description: Orders database connection string, required: true, secret: true, schemes: [postgres, postgresql], maxLength: 2048}
         # ...
 
 parameters:
@@ -56,3 +56,15 @@ $ bin/console docuconf:export --output=contract.cue
 
 [`contract.cue`](contract.cue) is generated; CI checks it is up to date. Deploying works as for the
 [Laravel example](../orders#6-deploy).
+
+**Generated docs.** [`CONFIG.md`](CONFIG.md), the reference for developers, and
+[`CONFIG.agents.md`](CONFIG.agents.md), the rules and facts AI agents need, are generated from `contract.cue` by the
+`docuconf` CLI from [docuconf-go](https://github.com/docuconf/docuconf-go), through the docs model in
+[`docs.json`](docs.json). Never edit them by hand; regenerate them after exporting the contract (CI fails if they
+are out of date):
+
+```console
+$ docuconf docs contract.cue -o CONFIG.md
+$ docuconf docs contract.cue --format agents -o CONFIG.agents.md
+$ docuconf docs contract.cue --format model -o docs.json
+```

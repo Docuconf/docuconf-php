@@ -12,7 +12,7 @@ return [
     'log_level' => Env::enum('ORDERS_LOG_LEVEL', 'Minimum level the orders code logs', ['debug', 'info', 'warn', 'error'], default: 'info'),
 
     // A secret: never printed, and the platform must supply it from a Secret.
-    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true),
+    'database_url' => Env::url('DATABASE_URL', 'Orders database connection string', required: true, schemes: ['postgres', 'postgresql'], secret: true, maxLength: 2048),
 
     'allowed_origins' => Env::list('ALLOWED_ORIGINS', 'Origins allowed to call the API (CORS)', default: ['http://localhost:3000'], minItems: 1),
 
