@@ -21,6 +21,8 @@ final class VarSpec
 
     public string $type = 'string';
     public string $description = '';
+    /** CommonMark for generated docs only (SPEC §4.2); never read at runtime. */
+    public ?string $details = null;
     public bool $required = false;
     public bool $secret = false;
     public ?string $group = null;

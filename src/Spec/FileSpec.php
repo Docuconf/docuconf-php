@@ -14,6 +14,8 @@ final class FileSpec
     public const TYPES = ['config', 'tls', 'caBundle', 'keystore', 'text', 'binary'];
 
     public string $description = '';
+    /** CommonMark for generated docs only (SPEC §4.2); never read at runtime. */
+    public ?string $details = null;
     public bool $required = false;
     public bool $secret = false;
     public string $path = '';

@@ -6,6 +6,7 @@ namespace Docuconf\Laravel;
 
 use Docuconf\Declaration;
 use Docuconf\DeclarationError;
+use Docuconf\Docs;
 use Docuconf\Duration;
 use Docuconf\Environment;
 use Docuconf\Export\Exporter;
@@ -45,7 +46,7 @@ final class Env
 
     public static function string(
         string $name,
-        string $description,
+        string $description = '',
         ?string $default = null,
         bool $required = false,
         bool $secret = false,
@@ -53,9 +54,10 @@ final class Env
         ?int $maxLength = null,
         ?string $pattern = null,
         ?string $group = null,
+        ?string $details = null,
     ): ?string {
         /** @var ?string */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($minLength, $maxLength, $pattern) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($minLength, $maxLength, $pattern) {
             $v->isString();
             if ($minLength !== null) {
                 $v->minLength($minLength);
@@ -71,16 +73,17 @@ final class Env
 
     public static function int(
         string $name,
-        string $description,
+        string $description = '',
         ?int $default = null,
         bool $required = false,
         ?int $min = null,
         ?int $max = null,
         bool $secret = false,
         ?string $group = null,
+        ?string $details = null,
     ): ?int {
         /** @var ?int */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($min, $max) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($min, $max) {
             $v->isInteger();
             if ($min !== null) {
                 $v->min($min);
@@ -93,16 +96,17 @@ final class Env
 
     public static function float(
         string $name,
-        string $description,
+        string $description = '',
         ?float $default = null,
         bool $required = false,
         ?float $min = null,
         ?float $max = null,
         bool $secret = false,
         ?string $group = null,
+        ?string $details = null,
     ): ?float {
         /** @var ?float */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($min, $max) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($min, $max) {
             $v->isFloat();
             if ($min !== null) {
                 $v->min($min);
@@ -115,13 +119,14 @@ final class Env
 
     public static function bool(
         string $name,
-        string $description,
+        string $description = '',
         ?bool $default = null,
         bool $required = false,
         ?string $group = null,
+        ?string $details = null,
     ): ?bool {
         /** @var ?bool */
-        return self::declareVar($name, $description, $required, false, $group, $default, fn (VarBuilder $v) => $v->isBoolean());
+        return self::declareVar($name, $description, $details, $required, false, $group, $default, fn (VarBuilder $v) => $v->isBoolean());
     }
 
     /**
@@ -129,7 +134,7 @@ final class Env
      */
     public static function duration(
         string $name,
-        string $description,
+        string $description = '',
         string|Duration|null $default = null,
         bool $required = false,
         string|Duration|null $min = null,
@@ -137,9 +142,10 @@ final class Env
         string $encoding = 'go',
         bool $secret = false,
         ?string $group = null,
+        ?string $details = null,
     ): ?Duration {
         /** @var ?Duration */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($min, $max, $encoding) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($min, $max, $encoding) {
             $v->isDuration($encoding);
             if ($min !== null) {
                 $v->min($min);
@@ -153,16 +159,17 @@ final class Env
     /** @param list<string> $schemes */
     public static function url(
         string $name,
-        string $description,
+        string $description = '',
         ?string $default = null,
         bool $required = false,
         array $schemes = [],
         bool $secret = false,
         ?string $group = null,
         ?int $maxLength = null,
+        ?string $details = null,
     ): ?string {
         /** @var ?string */
-        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($schemes, $maxLength) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($schemes, $maxLength) {
             $v->isUrl(...$schemes);
             if ($maxLength !== null) {
                 $v->maxLength($maxLength);
@@ -180,9 +187,10 @@ final class Env
         ?string $default = null,
         bool $required = false,
         ?string $group = null,
+        ?string $details = null,
     ): ?string {
         /** @var ?string */
-        return self::declareVar($name, $description, $required, false, $group, $default, fn (VarBuilder $v) => $v->allowedValues($values));
+        return self::declareVar($name, $description, $details, $required, false, $group, $default, fn (VarBuilder $v) => $v->allowedValues($values));
     }
 
     /**
@@ -193,7 +201,7 @@ final class Env
      */
     public static function list(
         string $name,
-        string $description,
+        string $description = '',
         ?array $default = null,
         bool $required = false,
         string $items = 'string',
@@ -206,9 +214,10 @@ final class Env
         ?string $group = null,
         ?int $itemMinLength = null,
         ?int $itemMaxLength = null,
+        ?string $details = null,
     ): ?array {
         /** @var list<string|int>|null */
-        return self::declareVar($name, $description, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax, $itemMinLength, $itemMaxLength) {
+        return self::declareVar($name, $description, $details, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax, $itemMinLength, $itemMaxLength) {
             $v->isList($items, $encoding, $separator);
             if ($minItems !== null) {
                 $v->minItems($minItems);
@@ -236,15 +245,16 @@ final class Env
      */
     public static function json(
         string $name,
-        string $description,
+        string $description = '',
         string|array|null $schema = null,
         mixed $default = null,
         bool $required = false,
         bool $secret = false,
         ?string $group = null,
         ?int $maxLength = null,
+        ?string $details = null,
     ): mixed {
-        return self::declareVar($name, $description, $required, $secret, $group, $default, function (VarBuilder $v) use ($schema, $maxLength) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($schema, $maxLength) {
             $v->isJson($schema);
             if ($maxLength !== null) {
                 $v->maxLength($maxLength);
@@ -323,15 +333,29 @@ final class Env
     private static function declareVar(
         string $name,
         string $description,
+        ?string $details,
         bool $required,
         bool $secret,
         ?string $group,
         mixed $default,
         \Closure $type,
     ): mixed {
-        $apply = function (Declaration $d) use ($name, $description, $required, $secret, $group, $default, $type): void {
+        // The PHPDoc comment before the config entry documents it, as in
+        // the core API: its first paragraph is the description when the
+        // argument is '', and the rest is the details.
+        $site = self::site();
+        $comment = $site === null ? null : Docs::commentAt(...$site);
+        if ($comment !== null) {
+            [$first, $rest] = Docs::split($comment);
+            $description = trim($description) === '' ? $first : $description;
+            $details ??= $rest;
+        }
+        $apply = function (Declaration $d) use ($name, $description, $details, $required, $secret, $group, $default, $type): void {
             $v = $required ? $d->required($name) : $d->ifPresent($name);
             $v->describe($description)->secret($secret);
+            if ($details !== null) {
+                $v->details($details);
+            }
             $type($v);
             if ($group !== null) {
                 $v->group($group);
@@ -357,6 +381,22 @@ final class Env
         }
         self::$fingerprints[$name] = self::fingerprint($value);
         return $value;
+    }
+
+    /**
+     * The file and line that called Env::.
+     *
+     * @return array{string, int}|null
+     */
+    private static function site(): ?array
+    {
+        foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8) as $frame) {
+            $file = $frame['file'] ?? null;
+            if ($file !== null && $file !== __FILE__) {
+                return [$file, (int) ($frame['line'] ?? 0)];
+            }
+        }
+        return null;
     }
 
     /** "config/orders.php:10: ", the config file line that called Env::. */

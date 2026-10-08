@@ -20,6 +20,10 @@ use Docuconf\Spec\FileSpec;
  */
 final class FileBuilder
 {
+    /** @var array{string, int}|null */
+    private ?array $docSite = null;
+    private bool $detailsSet = false;
+
     /** @internal */
     public function __construct(private readonly FileSpec $spec)
     {
@@ -35,6 +39,51 @@ final class FileBuilder
     {
         $this->spec->description = $description;
         return $this;
+    }
+
+    /**
+     * Longer documentation for generated docs, in CommonMark: why the
+     * file input exists and when to change it. At most 4000 characters, never
+     * read at runtime. By default, the PHPDoc comment before the
+     * declaration gives it (see the README).
+     */
+    public function details(string $details): self
+    {
+        $this->spec->details = $details;
+        $this->detailsSet = true;
+        return $this;
+    }
+
+    /**
+     * Where the declaration is, for its PHPDoc comment.
+     *
+     * @internal
+     * @param array{string, int}|null $site
+     */
+    public function documentedAt(?array $site): self
+    {
+        $this->docSite = $site;
+        return $this;
+    }
+
+    /** Fills the description and details from the PHPDoc comment, where not given. */
+    private function applyDoc(): void
+    {
+        if ($this->docSite === null) {
+            return;
+        }
+        $comment = Docs::commentAt(...$this->docSite);
+        $this->docSite = null;
+        if ($comment === null) {
+            return;
+        }
+        [$description, $details] = Docs::split($comment);
+        if (trim($this->spec->description) === '' && $description !== '') {
+            $this->spec->description = $description;
+        }
+        if (!$this->detailsSet) {
+            $this->spec->details = $details;
+        }
     }
 
     public function required(bool $required = true): self
@@ -170,6 +219,7 @@ final class FileBuilder
      */
     public function build(array &$problems): FileSpec
     {
+        $this->applyDoc();
         if ($this->spec->class !== null && $this->spec->schema === null) {
             try {
                 $this->spec->schema = SchemaGenerator::forClass($this->spec->class);

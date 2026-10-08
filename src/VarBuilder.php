@@ -29,6 +29,9 @@ final class VarBuilder
     private ?string $schemaClass = null;
     /** @var array<string, mixed>|null */
     private ?array $schemaArray = null;
+    /** @var array{string, int}|null */
+    private ?array $docSite = null;
+    private bool $detailsSet = false;
 
     /** @internal */
     public function __construct(private readonly VarSpec $spec)
@@ -43,11 +46,59 @@ final class VarBuilder
 
     // --- metadata -------------------------------------------------------
 
-    /** What the variable is for; at least 5 characters. Required. */
+    /**
+     * What the variable is for; at least 5 characters. Required, unless the
+     * PHPDoc comment before the declaration gives it.
+     */
     public function describe(string $description): self
     {
         $this->spec->description = $description;
         return $this;
+    }
+
+    /**
+     * Longer documentation for generated docs, in CommonMark: why the
+     * variable exists and when to change it. At most 4000 characters, never
+     * read at runtime. By default, the PHPDoc comment before the
+     * declaration gives it (see the README).
+     */
+    public function details(string $details): self
+    {
+        $this->spec->details = $details;
+        $this->detailsSet = true;
+        return $this;
+    }
+
+    /**
+     * Where the declaration is, for its PHPDoc comment.
+     *
+     * @internal
+     * @param array{string, int}|null $site
+     */
+    public function documentedAt(?array $site): self
+    {
+        $this->docSite = $site;
+        return $this;
+    }
+
+    /** Fills the description and details from the PHPDoc comment, where not given. */
+    private function applyDoc(): void
+    {
+        if ($this->docSite === null) {
+            return;
+        }
+        $comment = Docs::commentAt(...$this->docSite);
+        $this->docSite = null;
+        if ($comment === null) {
+            return;
+        }
+        [$description, $details] = Docs::split($comment);
+        if (trim($this->spec->description) === '' && $description !== '') {
+            $this->spec->description = $description;
+        }
+        if (!$this->detailsSet) {
+            $this->spec->details = $details;
+        }
     }
 
     /** The value must come from a secret, and is never printed. */
@@ -305,6 +356,7 @@ final class VarBuilder
      */
     public function build(array &$problems): VarSpec
     {
+        $this->applyDoc();
         $s = $this->spec;
         $name = $s->name;
         $encoding = $s->encoding ?? 'go';

@@ -137,6 +137,7 @@ final class DocuconfBundle extends AbstractBundle
     private static function common(NodeBuilder $n): void
     {
         $n->scalarNode('description')->isRequired()->info('What it is for; at least 5 characters')->end();
+        $n->scalarNode('details')->info('Longer CommonMark for generated docs; at most 4000 characters')->end();
         // Strictly true or false: Symfony rejects "no" or "false" here.
         $n->booleanNode('required')->end();
         $n->booleanNode('secret')->end();

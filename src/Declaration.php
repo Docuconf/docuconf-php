@@ -248,7 +248,7 @@ final class Declaration
         if (isset($this->vars[$name])) {
             $this->duplicates[] = "$name: declared twice";
         }
-        return $this->vars[$name] = new VarBuilder(new VarSpec($name));
+        return $this->vars[$name] = (new VarBuilder(new VarSpec($name)))->documentedAt(Docs::callSite());
     }
 
     private function file(string $name, string $type, string $path): FileBuilder
@@ -258,6 +258,6 @@ final class Declaration
         }
         $spec = new FileSpec($name, $type);
         $spec->path = $path;
-        return $this->files[$name] = new FileBuilder($spec);
+        return $this->files[$name] = (new FileBuilder($spec))->documentedAt(Docs::callSite());
     }
 }

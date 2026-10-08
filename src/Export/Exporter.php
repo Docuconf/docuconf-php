@@ -66,6 +66,7 @@ final class Exporter
     private static function var(VarSpec $v): array
     {
         $o = ['type' => $v->type, 'description' => $v->description];
+        self::put($o, 'details', $v->details);
         self::common($o, $v->required, $v->secret, $v->group, $v->deprecated);
         if ($v->examples !== null) {
             $o['examples'] = $v->examples;
@@ -127,6 +128,7 @@ final class Exporter
             $o['format'] = $f->format;
         }
         $o['description'] = $f->description;
+        self::put($o, 'details', $f->details);
         self::common($o, $f->required, $f->secret, $f->group, $f->deprecated);
         $o['path'] = $f->path;
         self::put($o, 'pathEnv', $f->pathEnv);
