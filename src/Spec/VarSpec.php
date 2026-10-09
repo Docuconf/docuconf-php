@@ -16,7 +16,7 @@ use Docuconf\Duration;
  */
 final class VarSpec
 {
-    public const TYPES = ['string', 'int', 'float', 'bool', 'duration', 'url', 'enum', 'list', 'json'];
+    public const TYPES = ['string', 'int', 'float', 'bool', 'duration', 'url', 'enum', 'list', 'keySet', 'json'];
     public const LIST_ENCODINGS = ['csv', 'json', 'indexed'];
 
     public string $type = 'string';
@@ -45,7 +45,7 @@ final class VarSpec
     public int|float|Duration|null $min = null;
     public int|float|Duration|null $max = null;
 
-    // duration and list
+    // duration, list and keySet
     public ?string $encoding = null;
 
     // url
@@ -56,7 +56,7 @@ final class VarSpec
     /** @var list<string>|null */
     public ?array $values = null;
 
-    // list
+    // list (separator also for keySet)
     public string $items = 'string';
     public string $separator = ',';
     public ?int $minItems = null;
@@ -66,6 +66,14 @@ final class VarSpec
     /** Bounds on the length of each item of a string list, in characters. */
     public ?int $itemMinLength = null;
     public ?int $itemMaxLength = null;
+
+    // keySet: always secret; travels in a list's encodings, with separator.
+    // Unset, minKeys is 1 and maxKeys 2 (see minKeys() and maxKeys()).
+    public ?int $minKeys = null;
+    public ?int $maxKeys = null;
+    /** Bounds on the length of each key, in characters. An empty key is always out of range. */
+    public ?int $keyMinLength = null;
+    public ?int $keyMaxLength = null;
 
     // json
     /** @var array<string, mixed>|null */
@@ -77,12 +85,24 @@ final class VarSpec
     {
     }
 
+    /** A keySet's fewest keys: the declared minKeys, or 1. */
+    public function minKeys(): int
+    {
+        return $this->minKeys ?? 1;
+    }
+
+    /** A keySet's most keys: the declared maxKeys, or 2. */
+    public function maxKeys(): int
+    {
+        return $this->maxKeys ?? 2;
+    }
+
     /** The encoding in effect: the declared one, or the type's default. */
     public function encoding(): ?string
     {
         return match ($this->type) {
             'duration' => $this->encoding ?? 'go',
-            'list' => $this->encoding ?? 'csv',
+            'list', 'keySet' => $this->encoding ?? 'csv',
             default => null,
         };
     }

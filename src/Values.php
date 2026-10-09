@@ -102,6 +102,16 @@ final class Values implements ArrayAccess, IteratorAggregate, JsonSerializable
         return $this->typed($name, 'list', fn ($v) => is_array($v));
     }
 
+    /**
+     * A keySet variable's keys, or null when the optional variable is unset.
+     * The KeySet never prints them; use contains() or verify() to check a
+     * candidate against every key in constant time.
+     */
+    public function keySet(string $name): ?KeySet
+    {
+        return $this->typed($name, 'keySet', fn ($v) => $v instanceof KeySet);
+    }
+
     /** A json variable's value: decoded JSON, or the app's type when declared with a class. */
     public function json(string $name): mixed
     {

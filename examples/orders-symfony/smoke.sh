@@ -57,13 +57,13 @@ done
 echo "bad env: exited non-zero with:"
 sed 's/^/  /' "$tmp/bad.txt"
 
-# 3. A key set with an empty second key (a trailing comma): the item length
-# constraint refuses it, without printing the key.
+# 3. A key set with an empty second key (a trailing comma) is refused,
+# without printing the key.
 if WEBHOOK_KEYS="$old_key," "$php" bin/console docuconf:check >"$tmp/bad.txt" 2>&1; then
   echo "docuconf:check passed with an empty webhook key" >&2; exit 1
 fi
 expected='docuconf: 1 configuration problem:
-  - WEBHOOK_KEYS [out_of_range]: has an item shorter than itemMinLength 32 (0 characters)'
+  - WEBHOOK_KEYS [out_of_range]: has an empty key (key 2 of 2): a stray separator, or an unset item'
 if [ "$(cat "$tmp/bad.txt")" != "$expected" ] || grep -q webhook-key "$tmp/bad.txt"; then
   echo "unexpected output for an empty webhook key:" >&2; diff <(echo "$expected") "$tmp/bad.txt" >&2; exit 1
 fi

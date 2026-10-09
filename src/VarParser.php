@@ -27,25 +27,39 @@ final class VarParser
     private const URL_RE = '/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s]+$/D';
 
     /**
-     * Reads $spec from $env.
+     * Reads $spec from $env, over $layer: what a profile or an overlay sets
+     * for it (see Layers), which applies when the environment does not.
      *
      * @param array<string, string> $env
-     * @return array{bool, mixed, ?Violation} [present, typed value or default, violation]
+     * @param array{source: string, typed?: mixed, raw?: string|list<string>, bad?: true}|null $layer
+     * @return array{bool, mixed, ?Violation, ?string} [present, typed value or default, violation,
+     *         where the value came from: "env", an overlay, a profile, or null for the default]
      */
-    public static function read(VarSpec $spec, array $env): array
+    public static function read(VarSpec $spec, #[\SensitiveParameter] array $env, ?array $layer = null): array
     {
         $name = $spec->name;
         try {
             $raw = self::raw($spec, $env);
         } catch (ParseFailure $f) {
-            return [true, null, new Violation($name, $f->violationCode, $f->getMessage())];
+            return [true, null, new Violation($name, $f->violationCode, $f->getMessage()), 'env'];
         }
+        $source = 'env';
         // An empty string is a value for strings, and unset for every other type.
+        if (($raw === null || ($raw === '' && $spec->type !== 'string')) && $layer !== null) {
+            if (isset($layer['bad'])) {
+                return [true, null, null, $layer['source']]; // reported by Layers
+            }
+            if (array_key_exists('typed', $layer)) {
+                return [false, $layer['typed'], null, $layer['source']];
+            }
+            $raw = $layer['raw'] ?? null;
+            $source = $layer['source'];
+        }
         if ($raw === null || ($raw === '' && $spec->type !== 'string')) {
             if ($spec->required) {
-                return [false, null, new Violation($name, 'missing_required', 'required, but not set')];
+                return [false, null, new Violation($name, 'missing_required', 'required, but not set'), null];
             }
-            return [false, $spec->hasDefault ? $spec->default : null, null];
+            return [false, $spec->hasDefault ? $spec->default : null, null, null];
         }
         if ($spec->secret && is_string($raw)) {
             foreach (self::UNRESOLVED_PREFIXES as $prefix) {
@@ -54,7 +68,7 @@ final class VarParser
                         $name,
                         'invalid_type',
                         "holds an unresolved \"$prefix\" reference: the injector that should replace it did not run",
-                    )];
+                    ), $source];
                 }
             }
         }
@@ -62,19 +76,30 @@ final class VarParser
             $value = self::parse($spec, $raw);
             $problem = self::check($spec, $value, $raw);
         } catch (ParseFailure $f) {
-            return [true, null, new Violation($name, $f->violationCode, $f->getMessage())];
+            return [true, null, self::violation($name, $f->violationCode, $f->getMessage(), $source), $source];
         }
         if ($problem !== null) {
-            return [true, null, new Violation($name, $problem[0], $problem[1])];
+            return [true, null, self::violation($name, $problem[0], $problem[1], $source), $source];
+        }
+        if ($spec->type === 'keySet' && is_array($value)) {
+            /** @var list<string> $keys */
+            $keys = array_values($value);
+            $value = new KeySet($keys);
         }
         if ($spec->type === 'json' && $spec->class !== null) {
             try {
                 $value = Hydrator::hydrate($spec->class, $value);
             } catch (HydrationError $e) {
-                return [true, null, new Violation($name, 'schema_mismatch', $e->getMessage())];
+                return [true, null, self::violation($name, 'schema_mismatch', $e->getMessage(), $source), $source];
             }
         }
-        return [true, $value, null];
+        return [true, $value, null, $source];
+    }
+
+    /** A violation, saying where a value from below the environment came from. */
+    private static function violation(string $name, string $code, string $message, string $source): Violation
+    {
+        return new Violation($name, $code, $source === 'env' ? $message : "$source: $message");
     }
 
     /**
@@ -86,7 +111,7 @@ final class VarParser
      */
     private static function raw(VarSpec $spec, array $env): string|array|null
     {
-        if ($spec->type !== 'list' || $spec->encoding() !== 'indexed') {
+        if (!in_array($spec->type, ['list', 'keySet'], true) || $spec->encoding() !== 'indexed') {
             return $env[$spec->name] ?? null;
         }
         $prefix = $spec->name . '__';
@@ -142,7 +167,9 @@ final class VarParser
             case 'int':
                 return self::int($raw, $got);
             case 'float':
-                if (!preg_match('/^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/D', $raw)) {
+                // SPEC §5: digits on both sides of an optional point, never
+                // hex, inf, nan, underscores, ".5" or "5.".
+                if (!preg_match('/^[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/D', $raw)) {
                     throw new ParseFailure('invalid_type', 'is not a number' . $got);
                 }
                 $f = (float) $raw;
@@ -151,10 +178,11 @@ final class VarParser
                 }
                 return $f;
             case 'bool':
-                // The platform sends true/false; phpdotenv's isBoolean() words are accepted too.
+                // SPEC §5: true or false in any case, and nothing else (not
+                // phpdotenv's 1, yes or on), so every SDK reads the same value.
                 return match (strtolower($raw)) {
-                    'true', '1', 'yes', 'on' => true,
-                    'false', '0', 'no', 'off' => false,
+                    'true' => true,
+                    'false' => false,
                     default => throw new ParseFailure('invalid_type', 'is not a boolean (true or false)' . $got),
                 };
             case 'duration':
@@ -165,6 +193,7 @@ final class VarParser
                     throw new ParseFailure('invalid_type', 'is ' . $e->getMessage() . $got);
                 }
             case 'list':
+            case 'keySet':
                 if ($spec->encoding() === 'json') {
                     $decoded = json_decode($raw, true, 64, JSON_BIGINT_AS_STRING);
                     if (!is_array($decoded) || !array_is_list($decoded)) {
@@ -301,6 +330,38 @@ final class VarParser
                 }
                 if ($spec->maxItems !== null && $n > $spec->maxItems) {
                     return ['too_many_items', "has $n items, more than maxItems {$spec->maxItems}"];
+                }
+                return null;
+            case 'keySet':
+                // Every key is secret: no message shows one.
+                if ($value instanceof KeySet) {
+                    $value = $value->reveal();
+                }
+                if (!is_array($value) || !array_is_list($value)) {
+                    return ['invalid_type', 'is not a list of keys'];
+                }
+                foreach ($value as $i => $key) {
+                    if (!is_string($key)) {
+                        return ['invalid_type', 'has a key that is not a string'];
+                    }
+                    $len = mb_strlen($key, 'UTF-8');
+                    $which = 'key ' . ($i + 1) . ' of ' . count($value);
+                    if ($len === 0) {
+                        return ['out_of_range', "has an empty key ($which): a stray separator, or an unset item"];
+                    }
+                    if ($spec->keyMinLength !== null && $len < $spec->keyMinLength) {
+                        return ['out_of_range', "has a key shorter than keyMinLength {$spec->keyMinLength} ($which, $len characters)"];
+                    }
+                    if ($spec->keyMaxLength !== null && $len > $spec->keyMaxLength) {
+                        return ['out_of_range', "has a key longer than keyMaxLength {$spec->keyMaxLength} ($which, $len characters)"];
+                    }
+                }
+                $n = count($value);
+                if ($n < $spec->minKeys()) {
+                    return ['too_few_items', "has $n keys, fewer than minKeys {$spec->minKeys()}"];
+                }
+                if ($n > $spec->maxKeys()) {
+                    return ['too_many_items', "has $n keys, more than maxKeys {$spec->maxKeys()}"];
                 }
                 return null;
             case 'json':

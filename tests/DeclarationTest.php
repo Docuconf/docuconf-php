@@ -257,7 +257,7 @@ final class DeclarationTest extends TestCase
         yield 'bad iso8601 default' => [fn (Declaration $d) => $d->ifPresent('T')->isDuration('iso8601')->default('soon')->describe('A timeout'), 'write it as in the env (iso8601, such as PT30S) or in Go form (30s)'];
         yield 'an int' => [fn (Declaration $d) => $d->ifPresent('N')->isInteger()->minLength(1)->describe('A number'), 'minLength does not apply to an int variable'];
         yield 'an enum' => [fn (Declaration $d) => $d->ifPresent('E')->allowedValues(['a'])->schemes('https')->describe('A choice'), 'schemes does not apply to an enum variable'];
-        yield 'watch' => [fn (Declaration $d) => $d->text('license', '/etc/app/license/key')->reload('watch')->describe('Licence key'), 'reload "watch" is not supported'];
+        yield 'reload' => [fn (Declaration $d) => $d->text('license', '/etc/app/license/key')->reload('sometimes')->describe('Licence key'), 'reload must be "restart" or "watch"'];
         yield 'reserved mount' => [fn (Declaration $d) => $d->text('license', '/etc/license.key')->describe('Licence key'), 'hiding what the image has'];
         yield 'passwordVar not secret' => [function (Declaration $d) {
             $d->ifPresent('PW')->describe('Keystore password');
@@ -308,7 +308,7 @@ final class DeclarationTest extends TestCase
     {
         $env = Env::declare('svc');
         $env->ifPresent('OLD_PORT')->isInteger()->deprecated('use PORT', 'PORT')->describe('Old listen port');
-        self::assertSame(['OLD_PORT is deprecated: use PORT; use PORT'], $env->check(['OLD_PORT' => '1'])->warnings);
+        self::assertSame(['OLD_PORT is deprecated: use PORT (replaced by PORT)'], $env->check(['OLD_PORT' => '1'])->warnings);
     }
 
     public function testDotenvIsAnOptInAndRealEnvWins(): void

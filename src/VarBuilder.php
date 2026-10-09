@@ -129,7 +129,14 @@ final class VarBuilder
         return $this;
     }
 
-    /** Warns at boot when the variable is set. */
+    /**
+     * Marks the variable for staged removal (SPEC §4.2): the platform should
+     * stop setting it. $message says what to use instead, or why it is going
+     * away (not blank, at most 500 characters); $replacedBy names the
+     * variable that replaces it. A required variable cannot be deprecated.
+     * When the variable is set, boot logs a warning naming it and the
+     * message, never the value.
+     */
     public function deprecated(string $message, ?string $replacedBy = null): self
     {
         $this->spec->deprecated = $replacedBy === null ? ['message' => $message] : ['message' => $message, 'replacedBy' => $replacedBy];
@@ -168,6 +175,10 @@ final class VarBuilder
         return $this;
     }
 
+    /**
+     * `true` or `false`, in any case. Unlike phpdotenv's isBoolean(), not
+     * `1`, `yes` or `on`: SPEC §5 has one rule, so every SDK reads the same.
+     */
     public function isBoolean(): self
     {
         $this->spec->type = 'bool';
@@ -223,6 +234,55 @@ final class VarBuilder
         $this->spec->items = $items;
         $this->spec->encoding = $encoding;
         $this->spec->separator = $separator;
+        return $this;
+    }
+
+    /**
+     * A key set (SPEC §4.3): secret keys that are all valid at once, so one
+     * can be rotated with an overlap ("old,new" while rotating). Always
+     * secret; the value is a KeySet, with constant-time contains() and
+     * verify(). $encoding is how the env spells it, as for a list: "csv"
+     * (with $separator), "json" or "indexed". By default it holds 1 to 2
+     * keys; see minKeys(), maxKeys(), keyMinLength() and keyMaxLength().
+     *
+     * ```php
+     * $env->ifPresent('WEBHOOK_KEYS')->isKeySet()->keyMinLength(32)->describe('Keys that verify webhook signatures');
+     * ```
+     */
+    public function isKeySet(string $encoding = 'csv', string $separator = ','): self
+    {
+        $this->spec->type = 'keySet';
+        $this->spec->secret = true;
+        $this->spec->encoding = $encoding;
+        $this->spec->separator = $separator;
+        return $this;
+    }
+
+    /** The fewest keys a key set may hold (default 1, at least 1). */
+    public function minKeys(int $n): self
+    {
+        $this->spec->minKeys = $n;
+        return $this;
+    }
+
+    /** The most keys a key set may hold (default 2): the old and the new key while rotating. */
+    public function maxKeys(int $n): self
+    {
+        $this->spec->maxKeys = $n;
+        return $this;
+    }
+
+    /** The fewest characters (Unicode code points) each key may hold. An empty key always fails. */
+    public function keyMinLength(int $n): self
+    {
+        $this->spec->keyMinLength = $n;
+        return $this;
+    }
+
+    /** The most characters (Unicode code points) each key may hold. */
+    public function keyMaxLength(int $n): self
+    {
+        $this->spec->keyMaxLength = $n;
         return $this;
     }
 

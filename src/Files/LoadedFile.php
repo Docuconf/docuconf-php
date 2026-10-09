@@ -14,11 +14,29 @@ namespace Docuconf\Files;
  * itself, from `path`. The content of a secret file never shows in
  * var_dump(), print_r(), var_export() or VarDumper.
  *
+ * An input declared `reload: watch` (SPEC §4.6.2) is re-read when it
+ * changes: reading `content` or `value` looks at the files at most once
+ * per WATCH_INTERVAL seconds (Kubernetes swaps a symlink, which shows up
+ * as a different file), and refresh() looks at once. A changed file that
+ * fails its checks is not used: the previous content stays current, and
+ * the failure is logged with error_log(), never the content.
+ *
  * @property-read ?string $content the file's text, for config and text files
  * @property-read mixed $value the bound config object or data, or the text
  */
 final class LoadedFile
 {
+    /** Seconds between looks at a watched input's files. */
+    public const WATCH_INTERVAL = 1.0;
+
+    /** @var (\Closure(): array{?LoadedFile, list<\Docuconf\Violation>})|null */
+    private ?\Closure $reload = null;
+    /** @var list<string> */
+    private array $watched = [];
+    /** @var list<?array<int|string, int>> */
+    private array $stamps = [];
+    private float $next = 0.0;
+
     public function __construct(
         public readonly string $name,
         public readonly string $path,
@@ -29,8 +47,59 @@ final class LoadedFile
         \Docuconf\Vault::put($this, ['content' => $content, 'value' => $value]);
     }
 
+    /**
+     * Re-reads the input with $reload when any of $paths changes.
+     *
+     * @internal
+     * @param list<string> $paths
+     * @param \Closure(): array{?LoadedFile, list<\Docuconf\Violation>} $reload
+     */
+    public function watch(array $paths, \Closure $reload): self
+    {
+        $this->watched = $paths;
+        $this->stamps = self::stamps($paths);
+        $this->reload = $reload;
+        $this->next = microtime(true) + self::WATCH_INTERVAL;
+        return $this;
+    }
+
+    /** Whether the input is declared `reload: watch`. */
+    public function watched(): bool
+    {
+        return $this->reload !== null;
+    }
+
+    /**
+     * For a watched input, looks at its files now and re-reads them if they
+     * changed. Returns whether the content changed; false for an input
+     * that is not watched, or a change that failed its checks.
+     */
+    public function refresh(): bool
+    {
+        if ($this->reload === null) {
+            return false;
+        }
+        $this->next = microtime(true) + self::WATCH_INTERVAL;
+        $stamps = self::stamps($this->watched);
+        if ($stamps === $this->stamps) {
+            return false;
+        }
+        $this->stamps = $stamps;
+        [$fresh, $violations] = ($this->reload)();
+        if ($fresh === null || $violations !== []) {
+            $why = implode('; ', array_map(fn ($v) => "[{$v->code}] {$v->message}", $violations));
+            error_log("docuconf: file {$this->name} changed, but the new content fails its checks, so the previous content stays in use: $why");
+            return false;
+        }
+        \Docuconf\Vault::put($this, ['content' => $fresh->content, 'value' => $fresh->value]);
+        return true;
+    }
+
     public function __get(string $property): mixed
     {
+        if ($this->reload !== null && microtime(true) >= $this->next) {
+            $this->refresh();
+        }
         $data = \Docuconf\Vault::get($this);
         if (!is_array($data) || !array_key_exists($property, $data)) {
             throw new \LogicException("docuconf: LoadedFile has no property \"$property\"");
@@ -68,5 +137,23 @@ final class LoadedFile
     public function file(string $name): string
     {
         return $this->path . '/' . $name;
+    }
+
+    /**
+     * What identifies each file's current content: a projected volume swaps
+     * a symlink, which stat() follows, so a swap is a different inode.
+     *
+     * @param list<string> $paths
+     * @return list<?array<int|string, int>>
+     */
+    private static function stamps(array $paths): array
+    {
+        $out = [];
+        foreach ($paths as $p) {
+            clearstatcache(true, $p);
+            $st = @stat($p);
+            $out[] = $st === false ? null : ['dev' => $st['dev'], 'ino' => $st['ino'], 'size' => $st['size'], 'mtime' => $st['mtime'], 'ctime' => $st['ctime']];
+        }
+        return $out;
     }
 }

@@ -50,22 +50,20 @@ container is cached: after changing `docuconf.yaml`, run `bin/console cache:clea
 
 ## Rotate a key
 
-`WEBHOOK_KEYS` is a key set, a secret list of one or two keys of 32 to 256 characters each:
+`WEBHOOK_KEYS` is a `keySet` (SPEC §4.3): one or two secret keys (the defaults) of 32 to 256 characters each.
 `POST /webhooks/payments` accepts a body whose `X-Signature` header is the hex HMAC-SHA256 of the body under any
-key in the list ([`src/Webhooks.php`](src/Webhooks.php)). It is declared like the others, its rotation steps in
-`details`:
+key in the set: [`src/Webhooks.php`](src/Webhooks.php) passes the check to `KeySet::verify()`, which tries every key.
+It is declared like the others, and always secret:
 
 ```yaml
         WEBHOOK_KEYS:
-            type: list
+            type: keySet
             description: Keys that verify the signature on incoming payment webhooks
-            secret: true
-            items: string
-            minItems: 1
-            maxItems: 2
-            itemMinLength: 32
-            itemMaxLength: 256
+            keyMinLength: 32
+            keyMaxLength: 256
 ```
+
+`docuconf docs` prints the rotation steps for a key set, so [`CONFIG.md`](CONFIG.md) has them too.
 
 It is one comma-separated value, so one Kubernetes Secret key (`secretKeyRef: {name: orders-webhooks, key: keys}`)
 holds it. A variable is read once, at start, so a new key reaches the service only when the pods restart; with two
@@ -80,7 +78,7 @@ A trailing comma or a truncated key is refused at boot, without printing the key
 ```console
 $ WEBHOOK_KEYS=old-webhook-key-0123456789abcdef0123, bin/console docuconf:check
 docuconf: 1 configuration problem:
-  - WEBHOOK_KEYS [out_of_range]: has an item shorter than itemMinLength 32 (0 characters)
+  - WEBHOOK_KEYS [out_of_range]: has an empty key (key 2 of 2): a stray separator, or an unset item
 ```
 
 [`smoke.sh`](smoke.sh) posts webhooks signed with both keys, and

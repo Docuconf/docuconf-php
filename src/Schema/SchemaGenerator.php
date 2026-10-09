@@ -60,8 +60,9 @@ final class SchemaGenerator
         $properties = [];
         $required = [];
         foreach (ClassShape::properties($class) as $p) {
-            $schema = $this->property($p['type'], $p['listOf']);
             $field = $p['field'];
+            $nullable = $field === null || $field->nullable;
+            $schema = $this->property($p['type'], $p['listOf'], $nullable);
             if ($field !== null) {
                 $schema += array_filter([
                     'description' => $field->description,
@@ -81,7 +82,7 @@ final class SchemaGenerator
                 } elseif ($default instanceof Duration) {
                     $default = $default->toString();
                 }
-                if ($default === null || is_scalar($default) || is_array($default)) {
+                if (($default === null && $nullable) || is_scalar($default) || is_array($default)) {
                     $schema['default'] = $default;
                 }
             } else {
@@ -101,9 +102,10 @@ final class SchemaGenerator
     }
 
     /** @return array<string, mixed> */
-    private function property(?\ReflectionType $type, ?string $listOf): array
+    private function property(?\ReflectionType $type, ?string $listOf, bool $allowNull = true): array
     {
         [$named, $nullable] = ClassShape::split($type);
+        $nullable = $nullable && $allowNull;
         if ($named === []) {
             return [];
         }

@@ -31,21 +31,17 @@ return [
 
     'worker_count' => Env::int('WORKER_COUNT', 'Number of background workers', default: 4, min: 1, max: 64),
 
-    // A key set (SPEC §6.1): a secret list, "old,new" in one Secret key while
-    // a key is rotated. Never printed; an empty or truncated key fails at boot.
+    // A key set (SPEC §4.3): "old,new" in one Secret key while a key is
+    // rotated. Always secret, never printed; an empty or truncated key fails
+    // at boot. The handler reads it as a Docuconf\KeySet from the validated
+    // values (routes/web.php).
 
     /**
      * Keys that verify the signature on incoming payment webhooks
      *
-     * A webhook is accepted when it is signed with any key in the list, so
-     * the key can be rotated without turning webhooks away. To rotate:
-     *
-     *  1. add the new key as the second item, and roll out;
-     *  2. switch the sender to the new key;
-     *  3. remove the old key, and roll out.
-     *
-     * Each key is 32 to 256 characters, so an empty or truncated key fails
-     * at boot. Without this variable, the service rejects every webhook.
+     * A webhook is accepted when it is signed with any key in the set. Each
+     * key is 32 to 256 characters, so an empty or truncated key fails at
+     * boot. Without this variable, the service rejects every webhook.
      */
-    'webhook_keys' => Env::list('WEBHOOK_KEYS', secret: true, minItems: 1, maxItems: 2, itemMinLength: 32, itemMaxLength: 256),
+    'webhook_keys' => Env::keySet('WEBHOOK_KEYS', keyMinLength: 32, keyMaxLength: 256),
 ];

@@ -8,6 +8,8 @@ use Docuconf\Export\Exporter;
 use Docuconf\Schema\Json;
 use Docuconf\Spec\ContractSpec;
 use Docuconf\Spec\FileSpec;
+use Docuconf\Spec\OverlaySpec;
+use Docuconf\Spec\ProfilesSpec;
 use Docuconf\Spec\SpecValidator;
 use Docuconf\Spec\VarSpec;
 
@@ -48,9 +50,7 @@ final class Contract
         }
         $problems = [];
         foreach (self::unknownKeys($contract, self::TOP_KEYS) as $key) {
-            $problems[] = in_array($key, ['overlays', 'profiles'], true)
-                ? "$key are not supported by docuconf-php yet; remove them, or load this contract with an SDK that supports them"
-                : self::unknown($key, self::TOP_KEYS, 'contract');
+            $problems[] = self::unknown($key, self::TOP_KEYS, 'contract');
         }
         if (($contract['kind'] ?? null) !== 'ConfigContract') {
             $problems[] = 'kind must be ConfigContract';
@@ -95,6 +95,16 @@ final class Contract
                 $problems[] = "file $name: " . $e->getMessage();
             }
         }
+        if (array_key_exists('profiles', $contract)) {
+            $spec->profiles = self::profiles($contract['profiles'], $spec, $problems);
+        }
+        foreach (self::map($contract['overlays'] ?? [], 'overlays', $problems) as $name => $o) {
+            try {
+                $spec->overlays[$name] = self::overlay((string) $name, $o);
+            } catch (\InvalidArgumentException | \TypeError $e) {
+                $problems[] = "overlay $name: " . $e->getMessage();
+            }
+        }
         $problems = [...$problems, ...SpecValidator::problems($spec)];
         if ($problems !== []) {
             throw new DeclarationError($problems);
@@ -114,6 +124,11 @@ final class Contract
         $processEnv = $env === null;
         $env ??= Environment::capture();
         $result = Loader::load($this->spec, $env);
+        if ($processEnv) {
+            // A real boot: warn about deprecated inputs that are set (by
+            // name and message, never the value) and likely typos.
+            Console::warnings($result->warnings);
+        }
         if (!$result->ok()) {
             $error = new ConfigurationError($result->violations);
             TerminationLog::write($error->getMessage(), $env, $processEnv);
@@ -144,7 +159,9 @@ final class Contract
         return Exporter::toCue($this->spec, $package);
     }
 
-    private const TOP_KEYS = ['apiVersion', 'kind', 'metadata', 'vars', 'files'];
+    private const TOP_KEYS = ['apiVersion', 'kind', 'metadata', 'vars', 'files', 'profiles', 'overlays'];
+
+    private const OVERLAY_KEYS = ['name', 'description', 'format', 'path', 'keySeparator', 'reload'];
 
     private const VAR_COMMON = ['name', 'type', 'description', 'details', 'required', 'secret', 'group', 'examples', 'configKey', 'deprecated', 'default'];
 
@@ -153,6 +170,7 @@ final class Contract
         ...self::VAR_COMMON,
         'minLength', 'maxLength', 'pattern', 'min', 'max', 'encoding', 'schemes', 'values',
         'items', 'separator', 'minItems', 'maxItems', 'itemMin', 'itemMax', 'itemMinLength', 'itemMaxLength', 'schema',
+        'minKeys', 'maxKeys', 'keyMinLength', 'keyMaxLength',
     ];
 
     private const FILE_KEYS = [
@@ -177,7 +195,8 @@ final class Contract
         $out = [];
         foreach ($m as $name => $entry) {
             if (!is_array($entry) || array_is_list($entry) && $entry !== []) {
-                $problems[] = ($what === 'files' ? 'file ' : '') . "$name: must be an object, got " . get_debug_type($entry);
+                $prefix = ['files' => 'file ', 'overlays' => 'overlay '][$what] ?? '';
+                $problems[] = $prefix . "$name: must be an object, got " . get_debug_type($entry);
                 continue;
             }
             $out[(string) $name] = $entry;
@@ -223,7 +242,8 @@ final class Contract
         $s->description = self::str($v, 'description') ?? '';
         $s->details = self::str($v, 'details');
         $s->required = self::bool($v, 'required') ?? false;
-        $s->secret = self::bool($v, 'secret') ?? false;
+        // A keySet is always secret (SPEC §4.3); an explicit false is an error.
+        $s->secret = self::bool($v, 'secret') ?? $s->type === 'keySet';
         $s->group = self::str($v, 'group');
         $s->examples = self::strings($v, 'examples');
         $s->configKey = self::str($v, 'configKey');
@@ -242,6 +262,10 @@ final class Contract
         $s->itemMax = self::int($v, 'itemMax');
         $s->itemMinLength = self::int($v, 'itemMinLength');
         $s->itemMaxLength = self::int($v, 'itemMaxLength');
+        $s->minKeys = self::int($v, 'minKeys');
+        $s->maxKeys = self::int($v, 'maxKeys');
+        $s->keyMinLength = self::int($v, 'keyMinLength');
+        $s->keyMaxLength = self::int($v, 'keyMaxLength');
         if (array_key_exists('schema', $v)) {
             $s->schema = match (true) {
                 is_array($v['schema']) => $v['schema'],
@@ -264,13 +288,95 @@ final class Contract
         $s->max = $bound('max');
         if (array_key_exists('default', $v)) {
             $s->hasDefault = true;
-            $d = $v['default'];
-            $s->default = match ($s->type) {
-                'duration' => is_string($d) ? Duration::fromGo($d) : throw new \InvalidArgumentException('default must be a Go duration string, such as "30s"'),
-                'float' => is_int($d) ? (float) $d : $d,
-                default => $d,
-            };
+            $s->default = self::typed($s, $v['default'], 'default');
         }
+        return $s;
+    }
+
+    /**
+     * A value from the contract (a default, a profile default) in the
+     * variable's typed PHP form: a Duration for a duration, a float for a
+     * float. Constraints are checked by SpecValidator.
+     */
+    private static function typed(VarSpec $s, mixed $d, string $what): mixed
+    {
+        return match ($s->type) {
+            'duration' => is_string($d) ? Duration::fromGo($d) : throw new \InvalidArgumentException("$what must be a Go duration string, such as \"30s\""),
+            'float' => is_int($d) ? (float) $d : $d,
+            default => $d,
+        };
+    }
+
+    /**
+     * A contract's profiles (SPEC §4.4), each profile default typed for its
+     * variable. Undeclared and secret variables are kept as they are, for
+     * SpecValidator to report.
+     *
+     * @param list<string> $problems
+     */
+    private static function profiles(mixed $p, ContractSpec $spec, array &$problems): ?ProfilesSpec
+    {
+        if (!is_array($p) || array_is_list($p) && $p !== []) {
+            $problems[] = 'profiles must be an object with selector, default and defaults';
+            return null;
+        }
+        foreach (self::unknownKeys($p, ['selector', 'default', 'defaults']) as $key) {
+            $problems[] = self::unknown($key, ['selector', 'default', 'defaults'], 'profiles');
+        }
+        $selector = $p['selector'] ?? null;
+        $default = $p['default'] ?? null;
+        if (!is_string($selector) || !is_string($default)) {
+            $problems[] = 'profiles.selector and profiles.default must be strings';
+            return null;
+        }
+        $out = new ProfilesSpec($selector, $default);
+        $defaults = $p['defaults'] ?? [];
+        if ($defaults instanceof \stdClass) {
+            $defaults = [];
+        }
+        if (!is_array($defaults) || array_is_list($defaults) && $defaults !== []) {
+            $problems[] = 'profiles.defaults must be an object keyed by profile name';
+            return $out;
+        }
+        foreach ($defaults as $profile => $values) {
+            $profile = (string) $profile;
+            if ($values instanceof \stdClass) {
+                $values = [];
+            }
+            if (!is_array($values) || array_is_list($values) && $values !== []) {
+                $problems[] = "profiles.defaults.$profile must be an object keyed by variable name";
+                continue;
+            }
+            $out->defaults[$profile] = [];
+            foreach ($values as $name => $value) {
+                $name = (string) $name;
+                $var = $spec->vars[$name] ?? null;
+                try {
+                    $out->defaults[$profile][$name] = $var === null ? $value : self::typed($var, $value, "profiles.defaults.$profile.$name");
+                } catch (\InvalidArgumentException $e) {
+                    $problems[] = $e->getMessage();
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** @param array<string, mixed> $o */
+    private static function overlay(string $name, array $o): OverlaySpec
+    {
+        $unknown = self::unknownKeys($o, self::OVERLAY_KEYS);
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException(implode(', ', array_map(fn ($k) => self::unknown($k, self::OVERLAY_KEYS, 'the overlay'), $unknown)));
+        }
+        if (isset($o['name']) && $o['name'] !== $name) {
+            throw new \InvalidArgumentException('name must be the key it is declared under');
+        }
+        $s = new OverlaySpec($name);
+        $s->description = self::str($o, 'description');
+        $s->format = self::str($o, 'format') ?? '';
+        $s->path = self::str($o, 'path') ?? '';
+        $s->keySeparator = self::str($o, 'keySeparator') ?? '';
+        $s->reload = self::str($o, 'reload') ?? 'restart';
         return $s;
     }
 

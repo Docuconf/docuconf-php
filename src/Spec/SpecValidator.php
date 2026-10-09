@@ -58,7 +58,84 @@ final class SpecValidator
             }
             $mounts[$dir] = $name;
         }
+        if ($c->profiles !== null) {
+            array_push($p, ...self::profileProblems($c, $c->profiles));
+        }
+        foreach ($c->sortedOverlays() as $name => $o) {
+            foreach (self::overlayProblems($o) as $problem) {
+                $p[] = "overlay $name: $problem";
+            }
+            $dir = dirname($o->path);
+            if ($o->path !== '' && isset($mounts[$dir])) {
+                $p[] = "overlay $name: is mounted at $dir, as {$mounts[$dir]} is; mounts would hide each other";
+            }
+            $mounts[$dir] = "overlay $name";
+        }
         return $p;
+    }
+
+    /**
+     * SPEC §4.4: the selector is a declared variable, and every profile
+     * default names a declared, non-secret variable and satisfies it.
+     *
+     * @return list<string>
+     */
+    private static function profileProblems(ContractSpec $c, ProfilesSpec $profiles): array
+    {
+        $p = [];
+        if (!isset($c->vars[$profiles->selector])) {
+            $p[] = "profiles.selector \"{$profiles->selector}\" must be a declared variable";
+        }
+        foreach ($profiles->defaults as $profile => $values) {
+            foreach ($values as $name => $value) {
+                $at = "profiles.defaults.$profile.$name";
+                $var = $c->vars[$name] ?? null;
+                if ($var === null) {
+                    $p[] = "$at: $name is not a declared variable";
+                } elseif ($var->secret) {
+                    $p[] = "$at: $name is secret, and a secret has no value in a config file";
+                } elseif (($problem = VarParser::check($var, $value)) !== null) {
+                    $p[] = "$at: does not satisfy $name's constraints: {$problem[1]}";
+                }
+            }
+        }
+        return $p;
+    }
+
+    /** @return list<string> SPEC §4.7 */
+    private static function overlayProblems(OverlaySpec $o): array
+    {
+        $p = [];
+        if (!preg_match(self::INPUT_NAME, $o->name)) {
+            $p[] = 'name must be a DNS label of at most 42 characters, such as platform';
+        }
+        if (!in_array($o->format, OverlaySpec::FORMATS, true)) {
+            $p[] = 'format must be json, yaml or toml';
+        } elseif ($o->format === 'yaml' && !class_exists(\Symfony\Component\Yaml\Yaml::class)) {
+            $p[] = 'reading YAML needs symfony/yaml: composer require symfony/yaml';
+        } elseif ($o->format === 'toml' && !class_exists(\Devium\Toml\Toml::class)) {
+            $p[] = 'reading TOML needs devium/toml: composer require devium/toml';
+        }
+        if (!self::normalisedPath($o->path)) {
+            $p[] = "path \"{$o->path}\" must be absolute and normalised";
+        } elseif (in_array(dirname($o->path), self::RESERVED_DIRS, true)) {
+            $p[] = 'would be mounted at ' . dirname($o->path) . ', hiding what the image has there; use a directory of its own';
+        }
+        if ($o->keySeparator !== ':' && $o->keySeparator !== '.') {
+            $p[] = 'keySeparator must be ":" or "."';
+        }
+        if ($o->reload === 'watch') {
+            $p[] = 'reload "watch" is not supported for an overlay: docuconf-php reads overlay values once, at boot; declare reload "restart"';
+        } elseif ($o->reload !== 'restart') {
+            $p[] = 'reload must be "restart" or "watch"';
+        }
+        return $p;
+    }
+
+    private static function normalisedPath(string $path): bool
+    {
+        return preg_match('#^/[A-Za-z0-9._/-]+$#D', $path) === 1 && !preg_match('#(^|/)\.\.?(/|$)#', $path)
+            && !str_contains($path, '//') && !str_ends_with($path, '/');
     }
 
     /** @return list<string> */
@@ -96,10 +173,11 @@ final class SpecValidator
         if ($v->secret && $v->examples !== null) {
             $p[] = 'a secret cannot have examples';
         }
+        array_push($p, ...self::deprecatedProblems($v->deprecated, $v->required));
         if ($v->deprecated !== null && isset($v->deprecated['replacedBy']) && !preg_match(self::ENV_NAME, $v->deprecated['replacedBy'])) {
             $p[] = 'deprecated.replacedBy must be a variable name';
         }
-        foreach (['minLength', 'maxLength', 'minItems', 'maxItems', 'itemMinLength', 'itemMaxLength'] as $field) {
+        foreach (['minLength', 'maxLength', 'minItems', 'maxItems', 'itemMinLength', 'itemMaxLength', 'minKeys', 'maxKeys', 'keyMinLength', 'keyMaxLength'] as $field) {
             if ($v->{$field} !== null && $v->{$field} < 0) {
                 $p[] = "$field cannot be negative";
             }
@@ -109,7 +187,8 @@ final class SpecValidator
             'min' => ['int', 'float', 'duration'], 'max' => ['int', 'float', 'duration'],
             'schemes' => ['url'], 'values' => ['enum'], 'minItems' => ['list'], 'maxItems' => ['list'],
             'itemMin' => ['list'], 'itemMax' => ['list'], 'itemMinLength' => ['list'], 'itemMaxLength' => ['list'],
-            'schema' => ['json'], 'encoding' => ['duration', 'list'],
+            'schema' => ['json'], 'encoding' => ['duration', 'list', 'keySet'],
+            'minKeys' => ['keySet'], 'maxKeys' => ['keySet'], 'keyMinLength' => ['keySet'], 'keyMaxLength' => ['keySet'],
         ];
         foreach ($only as $field => $types) {
             if ($v->{$field} !== null && !in_array($v->type, $types, true)) {
@@ -155,6 +234,32 @@ final class SpecValidator
             case 'url':
                 if ($v->schemes === []) {
                     $p[] = 'schemes cannot be empty';
+                }
+                break;
+            case 'keySet':
+                // SPEC §4.3: a key set is always secret, so it has no default and no examples.
+                if (!$v->secret) {
+                    $p[] = 'a keySet is always secret';
+                }
+                if (!in_array($v->encoding(), VarSpec::LIST_ENCODINGS, true)) {
+                    $p[] = 'encoding must be one of ' . implode(', ', VarSpec::LIST_ENCODINGS);
+                }
+                if ($v->encoding() === 'csv' && $v->separator === '') {
+                    $p[] = 'separator cannot be empty';
+                }
+                if ($v->minKeys() < 1) {
+                    $p[] = 'minKeys must be at least 1';
+                }
+                if ($v->maxKeys() < $v->minKeys()) {
+                    $p[] = 'maxKeys must be at least minKeys (' . $v->minKeys() . ')';
+                }
+                foreach (['keyMinLength', 'keyMaxLength'] as $f) {
+                    if ($v->{$f} !== null && $v->{$f} < 1) {
+                        $p[] = "$f must be at least 1";
+                    }
+                }
+                if ($v->keyMinLength !== null && $v->keyMaxLength !== null && $v->keyMinLength > $v->keyMaxLength) {
+                    $p[] = 'keyMinLength is greater than keyMaxLength';
                 }
                 break;
             case 'list':
@@ -211,7 +316,11 @@ final class SpecValidator
             $p[] = 'needs a description of at least 5 characters';
         }
         array_push($p, ...Docs::problems($f->details));
-        if (!preg_match('#^/[A-Za-z0-9._/-]+$#D', $f->path) || preg_match('#(^|/)\.\.?(/|$)#', $f->path) || str_contains($f->path, '//') || str_ends_with($f->path, '/')) {
+        array_push($p, ...self::deprecatedProblems($f->deprecated, $f->required));
+        if ($f->deprecated !== null && isset($f->deprecated['replacedBy']) && !preg_match(self::INPUT_NAME, $f->deprecated['replacedBy'])) {
+            $p[] = 'deprecated.replacedBy must be a file input name';
+        }
+        if (!self::normalisedPath($f->path)) {
             $p[] = "path \"{$f->path}\" must be absolute and normalised";
         } else {
             $dir = $f->type === 'tls' ? $f->path : dirname($f->path);
@@ -226,9 +335,7 @@ final class SpecValidator
                 $p[] = "pathEnv {$f->pathEnv} is also declared as a variable";
             }
         }
-        if ($f->reload === 'watch') {
-            $p[] = 'reload "watch" is not supported: this SDK reads files at boot, so declare reload "restart" and let the platform roll the pods';
-        } elseif ($f->reload !== 'restart') {
+        if ($f->reload !== 'restart' && $f->reload !== 'watch') {
             $p[] = 'reload must be "restart" or "watch"';
         }
         if ($f->maxSize !== null && $f->maxSize <= 0) {
@@ -282,6 +389,31 @@ final class SpecValidator
                     $p[] = "pattern is not RE2: $err";
                 }
                 break;
+        }
+        return $p;
+    }
+
+    /**
+     * SPEC §4.2: a deprecation message that is not blank and at most 500
+     * characters, on an input that is not required.
+     *
+     * @param array{message: string, replacedBy?: string}|null $deprecated
+     * @return list<string>
+     */
+    private static function deprecatedProblems(?array $deprecated, bool $required): array
+    {
+        if ($deprecated === null) {
+            return [];
+        }
+        $p = [];
+        $message = $deprecated['message'];
+        if (trim($message) === '') {
+            $p[] = 'deprecated needs a message: what to use instead, or why the input is going away';
+        } elseif (mb_strlen($message, 'UTF-8') > 500) {
+            $p[] = 'deprecated.message is ' . mb_strlen($message, 'UTF-8') . ' characters; at most 500 are allowed';
+        }
+        if ($required) {
+            $p[] = 'a required input cannot be deprecated: the platform could not stop setting it; make it optional first';
         }
         return $p;
     }

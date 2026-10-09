@@ -8,8 +8,8 @@ use Docuconf\Files\FileChecker;
 use Docuconf\Spec\ContractSpec;
 
 /**
- * Loads a contract from an environment: every variable (VarParser), then
- * every file input (FileChecker). All violations are collected, never just
+ * Loads a contract from an environment: the layers under it (Layers), every
+ * variable (VarParser), then every file input (FileChecker). All violations are collected, never just
  * the first. Variables not in the contract are ignored (SPEC §11.2 item 10).
  *
  * @internal
@@ -24,19 +24,24 @@ final class Loader
     {
         $values = [];
         $present = [];
-        $violations = [];
-        $warnings = [];
+        // Profiles and overlays (contract-first mode) sit under the environment.
+        [$layers, $violations, $warnings] = Layers::load($spec, $env);
         foreach ($spec->vars as $name => $var) {
-            [$isSet, $value, $violation] = VarParser::read($var, $env);
+            $layer = $layers[$name] ?? null;
+            [$isSet, $value, $violation, $source] = VarParser::read($var, $env, $layer);
             if ($violation !== null) {
                 $violations[] = $violation;
                 $value = null;
             }
             $values[$name] = $value;
             $present[$name] = $isSet;
+            if ($source === 'env' && $layer !== null && isset($layer['raw'])) {
+                $warnings[] = "$name is set in the environment and in {$layer['source']}; the environment wins";
+            }
             if ($isSet && $var->deprecated !== null) {
-                $warnings[] = "$name is deprecated: {$var->deprecated['message']}"
-                    . (isset($var->deprecated['replacedBy']) ? "; use {$var->deprecated['replacedBy']}" : '');
+                // The name and the message, never the value (SPEC §11.2).
+                $warnings[] = "$name is deprecated" . ($source === 'env' ? '' : " (set in $source)") . ": {$var->deprecated['message']}"
+                    . (isset($var->deprecated['replacedBy']) ? " (replaced by {$var->deprecated['replacedBy']})" : '');
             }
         }
         $files = [];
@@ -45,7 +50,8 @@ final class Loader
             array_push($violations, ...$fileViolations);
             $files[$name] = $loaded;
             if ($loaded !== null && $file->deprecated !== null) {
-                $warnings[] = "file $name is deprecated: {$file->deprecated['message']}";
+                $warnings[] = "file $name is deprecated: {$file->deprecated['message']}"
+                    . (isset($file->deprecated['replacedBy']) ? " (replaced by {$file->deprecated['replacedBy']})" : '');
             }
         }
         array_push($warnings, ...self::typos($spec, $env));

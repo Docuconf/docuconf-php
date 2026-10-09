@@ -159,6 +159,31 @@ final class LaravelTest extends TestCase
         }
     }
 
+    // The keySet type (SPEC §4.3): config gets the keys as env() would; Values gives a KeySet.
+    public function testAKeySet(): void
+    {
+        $old = 'old-webhook-key-0123456789abcdef0123';
+        $new = 'new-webhook-key-0123456789abcdef0123';
+        try {
+            putenv("WEBHOOK_KEYS=$old,$new");
+            $keys = Env::keySet('WEBHOOK_KEYS', 'Keys that verify webhook signatures', keyMinLength: 32, keyMaxLength: 256);
+            self::assertSame([$old, $new], $keys);
+            $declaration = Env::declaration('orders');
+            $var = $declaration->spec()->vars['WEBHOOK_KEYS'];
+            self::assertSame(['keySet', true, 1, 2, 32, 256], [$var->type, $var->secret, $var->minKeys(), $var->maxKeys(), $var->keyMinLength, $var->keyMaxLength]);
+            $values = $declaration->load();
+            self::assertSame('***', $values->redacted()['WEBHOOK_KEYS']);
+            self::assertTrue($values->keySet('WEBHOOK_KEYS')?->contains($new));
+
+            putenv("WEBHOOK_KEYS=$old,");
+            $result = Env::declaration('orders')->check();
+            self::assertSame(['WEBHOOK_KEYS out_of_range'], array_map(fn ($v) => "$v->input $v->code", $result->violations));
+            self::assertStringNotContainsString('webhook-key', implode("\n", array_map('strval', $result->violations)));
+        } finally {
+            putenv('WEBHOOK_KEYS');
+        }
+    }
+
     public function testBadValueFallsBackToDefaultInConfig(): void
     {
         putenv('ORDERS_PORT=0');

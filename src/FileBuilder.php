@@ -115,8 +115,9 @@ final class FileBuilder
 
     /**
      * "restart" (the default): the app reads the file at boot, so a change
-     * needs a rollout. This SDK does not reload files, so "watch" is
-     * rejected rather than promised.
+     * needs a rollout. "watch": the LoadedFile re-reads the file when it
+     * changes (a renewed certificate, an edited ConfigMap), keeping the
+     * previous content if the new one fails its checks; see LoadedFile.
      */
     public function reload(string $mode): self
     {

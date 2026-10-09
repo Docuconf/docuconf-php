@@ -180,6 +180,33 @@ final class SymfonyTest extends TestCase
         }
     }
 
+    // The keySet type (SPEC §4.3), written as in contract.cue; secret is implied.
+    public function testAKeySetType(): void
+    {
+        $vars = self::CONFIG['vars'];
+        $vars['WEBHOOK_KEYS'] = ['type' => 'keySet', 'description' => 'Keys that verify webhook signatures', 'keyMinLength' => 32, 'keyMaxLength' => 256];
+        putenv('ORDERS_DATABASE_URL=postgres://db/orders');
+        $old = 'old-webhook-key-0123456789abcdef0123';
+        $new = 'new-webhook-key-0123456789abcdef0123';
+        try {
+            putenv("WEBHOOK_KEYS=$old,$new");
+            $kernel = $this->kernel(['vars' => $vars]);
+            $values = $kernel->getContainer()->get(Values::class);
+            self::assertInstanceOf(Values::class, $values);
+            $keys = $values->keySet('WEBHOOK_KEYS');
+            self::assertNotNull($keys);
+            self::assertSame([$old, $new], $keys->reveal());
+            self::assertTrue($keys->verify(fn (string $k) => $k === $old));
+            self::assertSame('***', $values->redacted()['WEBHOOK_KEYS']);
+
+            putenv("WEBHOOK_KEYS=$old,$new,$old");
+            $result = (new Docuconf('orders', null, $vars, []))->check();
+            self::assertSame(['WEBHOOK_KEYS too_many_items'], array_map(fn ($v) => "$v->input $v->code", $result->violations));
+        } finally {
+            putenv('WEBHOOK_KEYS');
+        }
+    }
+
     public function testVaultSecretsCount(): void
     {
         $vault = new SodiumVault($this->dir . '/config/secrets/test');

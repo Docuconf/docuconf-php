@@ -10,6 +10,7 @@ use Docuconf\Docs;
 use Docuconf\Duration;
 use Docuconf\Environment;
 use Docuconf\Export\Exporter;
+use Docuconf\KeySet;
 use Docuconf\VarBuilder;
 use Docuconf\VarParser;
 
@@ -240,6 +241,53 @@ final class Env
                 $v->itemMaxLength($itemMaxLength);
             }
         });
+    }
+
+    /**
+     * A key set (SPEC §4.3): secret keys that are all valid at once, so one
+     * can be rotated with an overlap ("old,new" in one Secret key while
+     * rotating). Always secret. Returns the keys in order, as env() would,
+     * so that `config:cache` can store them; read them as a KeySet, with
+     * constant-time contains() and verify(), from the validated values:
+     *
+     * ```php
+     * 'webhook_keys' => Env::keySet('WEBHOOK_KEYS', 'Keys that verify webhook signatures', keyMinLength: 32),
+     * // in a route or controller
+     * app(\Docuconf\Values::class)->keySet('WEBHOOK_KEYS')?->verify(fn (string $key) => ...);
+     * ```
+     *
+     * @param string $encoding csv (a,b), json (["a","b"]) or indexed (NAME__0, NAME__1)
+     * @return list<string>|null
+     */
+    public static function keySet(
+        string $name,
+        string $description = '',
+        bool $required = false,
+        string $encoding = 'csv',
+        string $separator = ',',
+        ?int $minKeys = null,
+        ?int $maxKeys = null,
+        ?int $keyMinLength = null,
+        ?int $keyMaxLength = null,
+        ?string $group = null,
+        ?string $details = null,
+    ): ?array {
+        $keys = self::declareVar($name, $description, $details, $required, true, $group, null, function (VarBuilder $v) use ($encoding, $separator, $minKeys, $maxKeys, $keyMinLength, $keyMaxLength) {
+            $v->isKeySet($encoding, $separator);
+            if ($minKeys !== null) {
+                $v->minKeys($minKeys);
+            }
+            if ($maxKeys !== null) {
+                $v->maxKeys($maxKeys);
+            }
+            if ($keyMinLength !== null) {
+                $v->keyMinLength($keyMinLength);
+            }
+            if ($keyMaxLength !== null) {
+                $v->keyMaxLength($keyMaxLength);
+            }
+        });
+        return $keys instanceof KeySet ? $keys->reveal() : null;
     }
 
     /**

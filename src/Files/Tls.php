@@ -27,9 +27,19 @@ final class Tls
         $fail = function (string $code, string $msg) use (&$out, $f): void {
             $out[] = new Violation($f->name, $code, $msg);
         };
+        // SPEC §11.2 item 5: a file with no PEM certificate or key at all is
+        // file_malformed; one whose PEM does not parse is certificate_invalid.
+        if (!self::hasPem($files['tls.crt'], 'CERTIFICATE')) {
+            $fail('file_malformed', 'tls.crt holds no PEM certificate');
+            return $out;
+        }
+        if (!self::hasPem($files['tls.key'], '[A-Z0-9 ]*PRIVATE KEY')) {
+            $fail('file_malformed', 'tls.key holds no PEM private key');
+            return $out;
+        }
         $chain = self::parseBundle($files['tls.crt']);
         if ($chain === []) {
-            $fail('certificate_invalid', 'tls.crt is not a PEM certificate');
+            $fail('certificate_invalid', 'tls.crt holds a PEM certificate that does not parse');
             return $out;
         }
         $leaf = $chain[0];
@@ -78,13 +88,21 @@ final class Tls
 
         if ($f->requireCA) {
             $cas = self::parseBundle($files['ca.crt'] ?? '');
-            if ($cas === []) {
-                $fail('certificate_invalid', 'ca.crt holds no PEM certificate');
+            if (!self::hasPem($files['ca.crt'] ?? '', 'CERTIFICATE')) {
+                $fail('file_malformed', 'ca.crt holds no PEM certificate');
+            } elseif ($cas === []) {
+                $fail('certificate_invalid', 'ca.crt holds no PEM certificate that parses');
             } elseif (!self::chainsTo($leaf, array_slice($chain, 1), $caPath)) {
                 $fail('certificate_invalid', 'the certificate does not chain to a CA in ca.crt');
             }
         }
         return $out;
+    }
+
+    /** Whether $pem holds a PEM block whose label matches $label (a regex fragment). */
+    public static function hasPem(string $pem, string $label): bool
+    {
+        return preg_match('/-----BEGIN ' . $label . '-----.+?-----END ' . $label . '-----/s', $pem) === 1;
     }
 
     /**

@@ -21,10 +21,15 @@ final class DurationTest extends TestCase
         yield ['go', '0', '0s'];
         yield ['go', '2us', '2us'];
         yield ['go', '1µs', '1us'];
+        yield ['go', '-1m30s', '-1m30s'];
+        yield ['go', '+5s', '5s'];
+        yield ['go', '-0', '0s'];
+        yield ['go', '.5s', '500ms'];
         yield ['iso8601', 'PT90S', '1m30s'];
         yield ['iso8601', 'PT1.5S', '1s500ms'];
         yield ['iso8601', 'P1DT2H', '26h'];
         yield ['iso8601', 'PT0S', '0s'];
+        yield ['iso8601', 'PT1,5S', '1s500ms'];
         yield ['seconds', '0.25', '250ms'];
         yield ['seconds', '180000', '50h'];
         yield ['timespan', '00:01:30', '1m30s'];
@@ -43,17 +48,32 @@ final class DurationTest extends TestCase
     {
         yield ['go', 'PT90S'];
         yield ['go', '90'];
-        yield ['go', '-1s'];
+        yield ['go', '5S'];
+        yield ['go', '1d'];
+        yield ['go', '1m 30s'];
+        yield ['go', '5s\n'];
+        yield ['go', '-'];
         yield ['go', ''];
         yield ['go', '.s'];
         yield ['go', '9999999999999999999h'];
         yield ['iso8601', '1m30s'];
         yield ['iso8601', 'P1M'];
         yield ['iso8601', 'PT'];
+        yield ['iso8601', 'P1W'];
+        yield ['iso8601', 'pt90s'];
+        yield ['iso8601', '-PT5S'];
         yield ['seconds', '90s'];
         yield ['seconds', '-1'];
+        yield ['seconds', '+5'];
+        yield ['seconds', '5e1'];
+        yield ['seconds', '.5'];
+        yield ['seconds', "5\n"];
         yield ['timespan', '1m30s'];
         yield ['timespan', '00:60:00'];
+        yield ['timespan', '01:30'];
+        yield ['timespan', '24:00:00'];
+        yield ['timespan', '-00:00:05'];
+        yield ['timespan', '00:1:30'];
     }
 
     #[DataProvider('rejects')]

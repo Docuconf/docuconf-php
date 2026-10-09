@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Docuconf\Tests;
 
+use Docuconf\KeySet;
 use Docuconf\LoadResult;
 use Docuconf\Laravel\Env;
 use Docuconf\Symfony\Docuconf;
@@ -11,10 +12,10 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Yaml\Yaml;
 
 /**
- * The examples' webhook key set (SPEC §6.1): WEBHOOK_KEYS, declared in the
- * Laravel example's config/orders.php and the Symfony example's
- * docuconf.yaml, and App\Webhooks::verify, which accepts a signature made
- * with any key in the set.
+ * The examples' webhook key set (SPEC §4.3, §6.1): WEBHOOK_KEYS, a keySet
+ * declared in the Laravel example's config/orders.php and the Symfony
+ * example's docuconf.yaml, and App\Webhooks::verify, which accepts a
+ * signature made with any key in the set.
  */
 final class ExampleWebhooksTest extends TestCase
 {
@@ -38,8 +39,7 @@ final class ExampleWebhooksTest extends TestCase
         return hash_hmac('sha256', self::BODY, $key);
     }
 
-    /** @param list<string>|null $keys */
-    private static function verify(?array $keys, ?string $signature): bool
+    private static function verify(?KeySet $keys, ?string $signature): bool
     {
         return \App\Webhooks::verify($keys, self::BODY, $signature);
     }
@@ -80,15 +80,14 @@ final class ExampleWebhooksTest extends TestCase
         foreach ($steps as $step => [$value, $old, $new]) {
             $result = $check($value);
             self::assertSame([], array_map('strval', $result->violations), $step);
-            /** @var list<string>|null $keys */
-            $keys = $result->values->list('WEBHOOK_KEYS');
+            $keys = $result->values->keySet('WEBHOOK_KEYS');
             self::assertSame($old, self::verify($keys, self::sign(self::OLD)), "$step: old key");
             self::assertSame($new, self::verify($keys, self::sign(self::NEW)), "$step: new key");
             self::assertFalse(self::verify($keys, self::sign(str_repeat('x', 32))), "$step: another key");
             self::assertSame('***', $result->values->redacted()['WEBHOOK_KEYS']);
         }
-        self::assertFalse(self::verify([self::OLD], 'not hex'));
-        self::assertFalse(self::verify([self::OLD], null));
+        self::assertFalse(self::verify(new KeySet([self::OLD]), 'not hex'));
+        self::assertFalse(self::verify(new KeySet([self::OLD]), null));
         self::assertFalse(self::verify(null, self::sign(self::OLD)), 'no keys configured');
     }
 
