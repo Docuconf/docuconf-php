@@ -361,7 +361,13 @@ receives it, before it is parsed and whitespace included (a json default is meas
 `itemMinLength()` and `itemMaxLength()` bound each item of a string list after it is split, so a separator never
 counts. A value out of bounds is `out_of_range`, and a secret is reported by its length, never its value. The
 `Env::url()` and `Env::json()` helpers take `maxLength:`, and `Env::list()` takes `itemMinLength:` and
-`itemMaxLength:`.
+`itemMaxLength:` (and the Symfony bundle the `itemMinLength` and `itemMaxLength` keys).
+
+**Key sets.** A secret list of one or two keys lets a key be rotated with no downtime
+([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)): one Secret key holds
+`old,new` during the overlap, and the item lengths catch an empty or truncated key at boot. Both examples declare one
+as `WEBHOOK_KEYS`: `Env::list('WEBHOOK_KEYS', secret: true, minItems: 1, maxItems: 2, itemMinLength: 32,
+itemMaxLength: 256)` in Laravel, the same keys in `docuconf.yaml`.
 
 **Encodings.** Lists are `csv` (`a,b`), `json` (`["a","b"]`) or `indexed` (`NAME__0`, `NAME__1`, numbered from
 0 with no gap); durations are `go` (`1m30s`), `iso8601` (`PT90S`), `seconds` (`90`) or `timespan` (`00:01:30`).

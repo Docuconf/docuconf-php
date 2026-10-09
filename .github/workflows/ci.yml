@@ -190,6 +190,7 @@ jobs:
           docuconf docs contract.cue --check CONFIG.md
           docuconf docs contract.cue --format agents --check CONFIG.agents.md
           docuconf docs contract.cue --format model --check docs.json
+          if [ -f deploy/values.yaml ]; then docuconf vet -contract contract.cue -values deploy/values.yaml; fi
       - name: Smoke test
         run: examples/${{ matrix.example }}/smoke.sh
 

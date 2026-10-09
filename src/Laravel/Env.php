@@ -194,6 +194,10 @@ final class Env
     }
 
     /**
+     * A list. With $secret, a secret list, such as a key set of one or two
+     * keys (`old,new` while a key is rotated, SPEC §6.1): no default, never
+     * printed, and $itemMinLength catches an empty or truncated key.
+     *
      * @param list<string|int>|null $default
      * @param 'string'|'int' $items
      * @param string $encoding csv (a,b), json (["a","b"]) or indexed (NAME__0, NAME__1)
@@ -215,9 +219,10 @@ final class Env
         ?int $itemMinLength = null,
         ?int $itemMaxLength = null,
         ?string $details = null,
+        bool $secret = false,
     ): ?array {
         /** @var list<string|int>|null */
-        return self::declareVar($name, $description, $details, $required, false, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax, $itemMinLength, $itemMaxLength) {
+        return self::declareVar($name, $description, $details, $required, $secret, $group, $default, function (VarBuilder $v) use ($items, $encoding, $separator, $minItems, $maxItems, $itemMin, $itemMax, $itemMinLength, $itemMaxLength) {
             $v->isList($items, $encoding, $separator);
             if ($minItems !== null) {
                 $v->minItems($minItems);

@@ -136,6 +136,29 @@ final class LaravelTest extends TestCase
         self::assertNull(config('orders.database_url'));
     }
 
+    // A key set (SPEC §6.1): a secret list with item length limits.
+    public function testASecretKeySet(): void
+    {
+        $old = 'old-webhook-key-0123456789abcdef0123';
+        $new = 'new-webhook-key-0123456789abcdef0123';
+        try {
+            putenv("WEBHOOK_KEYS=$old,$new");
+            $keys = Env::list('WEBHOOK_KEYS', 'Keys that verify webhook signatures', minItems: 1, maxItems: 2, itemMinLength: 32, itemMaxLength: 256, secret: true);
+            self::assertSame([$old, $new], $keys);
+            $declaration = Env::declaration('orders');
+            $var = $declaration->spec()->vars['WEBHOOK_KEYS'];
+            self::assertSame([true, 1, 2, 32, 256], [$var->secret, $var->minItems, $var->maxItems, $var->itemMinLength, $var->itemMaxLength]);
+            self::assertSame('***', $declaration->load()->redacted()['WEBHOOK_KEYS']);
+
+            putenv("WEBHOOK_KEYS=$old,");
+            $result = Env::declaration('orders')->check();
+            self::assertSame(['WEBHOOK_KEYS out_of_range'], array_map(fn ($v) => "$v->input $v->code", $result->violations));
+            self::assertStringNotContainsString('webhook-key', implode("\n", array_map('strval', $result->violations)));
+        } finally {
+            putenv('WEBHOOK_KEYS');
+        }
+    }
+
     public function testBadValueFallsBackToDefaultInConfig(): void
     {
         putenv('ORDERS_PORT=0');

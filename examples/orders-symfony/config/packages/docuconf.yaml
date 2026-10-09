@@ -9,6 +9,24 @@ docuconf:
         ALLOWED_ORIGINS: {type: list, description: Origins allowed to call the API (CORS), items: string, minItems: 1, default: ['http://localhost:3000']}
         REQUEST_TIMEOUT: {type: duration, description: Timeout for each request, min: 1s, max: 5m, default: 30s}
         WORKER_COUNT: {type: int, description: Number of background workers, min: 1, max: 64, default: 4}
+        # A key set (SPEC 6.1): a secret list, "old,new" in one Secret key while a key is rotated.
+        WEBHOOK_KEYS:
+            type: list
+            description: Keys that verify the signature on incoming payment webhooks
+            details: |-
+                A webhook is accepted when it is signed with any key in the list, so the key can be rotated without turning webhooks away. To rotate:
+
+                 1. add the new key as the second item, and roll out;
+                 2. switch the sender to the new key;
+                 3. remove the old key, and roll out.
+
+                Each key is 32 to 256 characters, so an empty or truncated key fails at boot. Without this variable, the service rejects every webhook.
+            secret: true
+            items: string
+            minItems: 1
+            maxItems: 2
+            itemMinLength: 32
+            itemMaxLength: 256
 
 parameters:
     orders.port: '%env(docuconf:PORT)%'
