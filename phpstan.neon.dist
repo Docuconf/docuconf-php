@@ -3,6 +3,9 @@ parameters:
     paths:
         - src
         - tests
+    # tests/ExampleWebhooksTest.php calls the examples' App\Webhooks.
+    scanFiles:
+        - examples/orders/app/Webhooks.php
     excludePaths:
         - tests/Fixtures/laravel-app/*
     treatPhpDocTypesAsCertain: false

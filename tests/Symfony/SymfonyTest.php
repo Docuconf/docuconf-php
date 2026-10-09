@@ -150,6 +150,36 @@ final class SymfonyTest extends TestCase
         $this->kernel(['vars' => $vars]);
     }
 
+    // A key set (SPEC §6.1, docuconf-go conformance/load/key_set.yaml): a secret list with item length limits.
+    public function testASecretKeySetWithItemLengths(): void
+    {
+        $vars = self::CONFIG['vars'];
+        $vars['WEBHOOK_KEYS'] = ['type' => 'list', 'description' => 'Keys that verify webhook signatures', 'secret' => true, 'items' => 'string',
+            'minItems' => 1, 'maxItems' => 2, 'itemMinLength' => 32, 'itemMaxLength' => 256];
+        putenv('ORDERS_DATABASE_URL=postgres://db/orders');
+        $old = 'old-webhook-key-0123456789abcdef0123';
+        $new = 'new-webhook-key-0123456789abcdef0123';
+        try {
+            putenv("WEBHOOK_KEYS=$old,$new");
+            $kernel = $this->kernel(['vars' => $vars]);
+            $docuconf = $kernel->getContainer()->get(Docuconf::class);
+            self::assertInstanceOf(Docuconf::class, $docuconf);
+            $var = $docuconf->spec()->vars['WEBHOOK_KEYS'];
+            self::assertSame([true, 32, 256], [$var->secret, $var->itemMinLength, $var->itemMaxLength]);
+            $values = $kernel->getContainer()->get(Values::class);
+            self::assertInstanceOf(Values::class, $values);
+            self::assertSame([$old, $new], $values->list('WEBHOOK_KEYS'));
+            self::assertSame('***', $values->redacted()['WEBHOOK_KEYS']);
+
+            putenv("WEBHOOK_KEYS=$old,");
+            $result = (new Docuconf('orders', null, $vars, []))->check();
+            self::assertSame(['WEBHOOK_KEYS out_of_range'], array_map(fn ($v) => "$v->input $v->code", $result->violations));
+            self::assertStringNotContainsString('webhook-key', implode("\n", array_map('strval', $result->violations)));
+        } finally {
+            putenv('WEBHOOK_KEYS');
+        }
+    }
+
     public function testVaultSecretsCount(): void
     {
         $vault = new SodiumVault($this->dir . '/config/secrets/test');

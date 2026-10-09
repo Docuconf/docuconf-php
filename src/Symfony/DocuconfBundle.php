@@ -110,6 +110,8 @@ final class DocuconfBundle extends AbstractBundle
         $n->integerNode('maxItems')->min(0)->end();
         $n->integerNode('itemMin')->end();
         $n->integerNode('itemMax')->end();
+        $n->integerNode('itemMinLength')->min(0)->end();
+        $n->integerNode('itemMaxLength')->min(0)->end();
         $n->variableNode('schema')->info('A JSON Schema')->end();
     }
 

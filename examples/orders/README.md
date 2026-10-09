@@ -8,11 +8,12 @@ A Laravel service whose configuration is declared with docuconf. It shows three 
   every problem at once.
 - **Export** the same declaration as `contract.cue`, which the platform checks before it deploys.
 
-`GET /healthz` returns `ok`. `GET /config` returns the typed values, with the secret shown as `***`.
+`GET /healthz` returns `ok`. `GET /config` returns the typed values, with the secrets shown as `***`.
+`POST /webhooks/payments` accepts a webhook signed with any key in `WEBHOOK_KEYS` (see [Rotate a key](#rotate-a-key)).
 
 The app is as small as Laravel allows: [`config/orders.php`](config/orders.php),
-[`routes/web.php`](routes/web.php), [`bootstrap/app.php`](bootstrap/app.php) and the usual `artisan` and
-`public/index.php`.
+[`routes/web.php`](routes/web.php), [`app/Webhooks.php`](app/Webhooks.php), [`bootstrap/app.php`](bootstrap/app.php)
+and the usual `artisan` and `public/index.php`.
 
 ## 1. Install
 
@@ -54,6 +55,21 @@ return [
      */
     'request_timeout' => Env::duration('REQUEST_TIMEOUT', default: '30s', min: '1s', max: '5m'),
     'worker_count' => Env::int('WORKER_COUNT', 'Number of background workers', default: 4, min: 1, max: 64),
+
+    /**
+     * Keys that verify the signature on incoming payment webhooks
+     *
+     * A webhook is accepted when it is signed with any key in the list, so
+     * the key can be rotated without turning webhooks away. To rotate:
+     *
+     *  1. add the new key as the second item, and roll out;
+     *  2. switch the sender to the new key;
+     *  3. remove the old key, and roll out.
+     *
+     * Each key is 32 to 256 characters, so an empty or truncated key fails
+     * at boot. Without this variable, the service rejects every webhook.
+     */
+    'webhook_keys' => Env::list('WEBHOOK_KEYS', secret: true, minItems: 1, maxItems: 2, itemMinLength: 32, itemMaxLength: 256),
 ];
 ```
 
@@ -71,6 +87,7 @@ exported as `details`, which `docuconf docs` renders into `CONFIG.md`.
 | `ALLOWED_ORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
 | `REQUEST_TIMEOUT` | duration, Go syntax (`45s`, `1m30s`) | `1s`–`5m`, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
+| `WEBHOOK_KEYS` | list of strings, comma-separated | secret, optional; 1–2 keys of 32–256 characters each |
 
 ## 3. Run
 
@@ -81,7 +98,7 @@ $ php artisan serve
 $ curl localhost:8080/healthz
 ok
 $ curl localhost:8080/config
-{"PORT":8080,"ORDERS_LOG_LEVEL":"info","DATABASE_URL":"***","ALLOWED_ORIGINS":["http:\/\/localhost:3000"],"REQUEST_TIMEOUT":"30s","WORKER_COUNT":4}
+{"PORT":8080,"ORDERS_LOG_LEVEL":"info","DATABASE_URL":"***","ALLOWED_ORIGINS":["http:\/\/localhost:3000"],"REQUEST_TIMEOUT":"30s","WORKER_COUNT":4,"WEBHOOK_KEYS":null}
 ```
 
 `php artisan serve` listens on `SERVER_PORT`, which `.env.example` sets to `${PORT}`. Real environment
@@ -119,7 +136,39 @@ text goes to `/dev/termination-log`, so `kubectl describe pod` shows it. `php ar
 same report without starting anything, which suits a container entrypoint before `php-fpm`.
 
 [`smoke.sh`](smoke.sh) runs the service with a valid environment and with `PORT=0` and no `DATABASE_URL`, and
-checks both (`./smoke.sh`); CI runs it on every push.
+checks both, and the webhook key set below (`./smoke.sh`); CI runs it on every push.
+
+## Rotate a key
+
+`WEBHOOK_KEYS` is a key set: `POST /webhooks/payments` accepts a body whose `X-Signature` header is the hex
+HMAC-SHA256 of the body under any key in the list ([`app/Webhooks.php`](app/Webhooks.php)). It is one
+comma-separated value, so one Kubernetes Secret key holds it:
+
+```yaml
+WEBHOOK_KEYS: # a key set: one Secret key holding "old,new" while rotating
+  secretKeyRef: {name: orders-webhooks, key: keys}
+```
+
+A variable is read once, at start, so a new key reaches the service only when the pods restart; with two keys valid
+at once, no webhook is turned away while that happens:
+
+1. Add the new key as the second item (`old,new` in the Secret), and roll out.
+2. Switch the sender to the new key.
+3. Remove the old key (`new`), and roll out.
+
+The contract allows 1 or 2 keys of 32 to 256 characters each, so a trailing comma or a truncated key stops the
+service at boot instead of locking out the sender, without printing the key:
+
+```console
+$ WEBHOOK_KEYS=old-webhook-key-0123456789abcdef0123, php artisan serve
+docuconf: 1 configuration problem:
+  - WEBHOOK_KEYS [out_of_range]: has an item shorter than itemMinLength 32 (0 characters)
+```
+
+[`smoke.sh`](smoke.sh) posts webhooks signed with both keys, and
+[`tests/ExampleWebhooksTest.php`](../../tests/ExampleWebhooksTest.php) walks through a rotation.
+[SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation) covers rotation in
+general.
 
 ## 5. Export the contract
 
@@ -147,7 +196,8 @@ $ docuconf docs contract.cue --format model -o docs.json
 
 Ship `contract.cue` with the image. The platform checks the values it intends to set against it before anything
 reaches the cluster: `docuconf vet` reports every missing or bad value, a secret given as a literal, or a policy
-violation, and `docuconf render` turns valid values into the pod's `env`, with `DATABASE_URL` from a Secret. A
+violation, and `docuconf render` turns valid values into the pod's `env`, with `DATABASE_URL` and `WEBHOOK_KEYS` from
+Secrets ([`deploy/values.yaml`](deploy/values.yaml); CI vets it). A
 Helm-based platform can use the [docuconf Helm chart](https://github.com/docuconf/docuconf-go/tree/main/helm)
 instead. In the container, run `php artisan serve --host=0.0.0.0 --port="$PORT"` (or `php artisan docuconf:check`
 before your FPM or Octane server), so a value that slipped past the platform still stops the pod with the report
