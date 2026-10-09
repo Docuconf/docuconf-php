@@ -43,8 +43,28 @@ final class ContractTest extends TestCase
             'unknown key "varz" in contract; did you mean "vars"?'];
         yield 'unknown metadata key' => [self::contract([], ['metadata' => ['name' => 'orders', 'labels' => []]]),
             'unknown key "labels" in metadata'];
-        yield 'overlays' => [self::contract([], ['overlays' => []]),
-            'overlays are not supported by docuconf-php yet'];
+        yield 'overlay typo' => [self::contract([], ['overlays' => ['platform' => ['format' => 'json', 'path' => '/app/config/p.json', 'keySeparator' => ':', 'relaod' => 'watch']]]),
+            'overlay platform: unknown key "relaod" in the overlay; did you mean "reload"?'];
+        yield 'overlay watch' => [self::contract([], ['overlays' => ['platform' => ['format' => 'json', 'path' => '/app/config/p.json', 'keySeparator' => ':', 'reload' => 'watch']]]),
+            'overlay platform: reload "watch" is not supported for an overlay'];
+        yield 'undeclared selector' => [self::contract([], ['profiles' => ['selector' => 'APP_ENV', 'default' => 'prod']]),
+            'profiles.selector "APP_ENV" must be a declared variable'];
+        yield 'secret profile default' => [self::contract(['APP_ENV' => ['type' => 'string', 'description' => 'the profile'], 'S' => ['type' => 'string', 'description' => 'some secret', 'secret' => true]], ['profiles' => ['selector' => 'APP_ENV', 'default' => 'prod', 'defaults' => ['prod' => ['S' => 'x']]]]),
+            'profiles.defaults.prod.S: S is secret'];
+        yield 'profile default out of range' => [self::contract(['APP_ENV' => ['type' => 'string', 'description' => 'the profile'], 'N' => ['type' => 'int', 'description' => 'a number', 'max' => 5]], ['profiles' => ['selector' => 'APP_ENV', 'default' => 'prod', 'defaults' => ['prod' => ['N' => 9]]]]),
+            "profiles.defaults.prod.N: does not satisfy N's constraints"];
+        yield 'keySet not secret' => [self::contract(['K' => ['type' => 'keySet', 'description' => 'some keys', 'secret' => false]]),
+            'K: a keySet is always secret'];
+        yield 'keySet maxKeys below minKeys' => [self::contract(['K' => ['type' => 'keySet', 'description' => 'some keys', 'minKeys' => 3]]),
+            'K: maxKeys must be at least minKeys (3)'];
+        yield 'keySet field on a list' => [self::contract(['L' => ['type' => 'list', 'description' => 'some items', 'maxKeys' => 3]]),
+            'L: maxKeys does not apply to a list variable'];
+        yield 'blank deprecation message' => [self::contract(['OLD' => ['type' => 'string', 'description' => 'old thing', 'deprecated' => ['message' => '  ']]]),
+            'OLD: deprecated needs a message'];
+        yield 'long deprecation message' => [self::contract(['OLD' => ['type' => 'string', 'description' => 'old thing', 'deprecated' => ['message' => str_repeat('é', 501)]]]),
+            'OLD: deprecated.message is 501 characters; at most 500 are allowed'];
+        yield 'required and deprecated' => [self::contract(['OLD' => ['type' => 'string', 'description' => 'old thing', 'required' => true, 'deprecated' => ['message' => 'Use NEW']]]),
+            'OLD: a required input cannot be deprecated'];
         yield 'deprecated typo' => [self::contract(['OLD' => ['type' => 'string', 'description' => 'old thing', 'deprecated' => ['mesage' => 'x']]]),
             'OLD: unknown key "mesage" in deprecated; did you mean "message"?'];
         yield 'file key typo' => [self::contract([], ['files' => ['license' => ['type' => 'text', 'description' => 'Licence key', 'path' => '/etc/app/license/key', 'secert' => true]]]),

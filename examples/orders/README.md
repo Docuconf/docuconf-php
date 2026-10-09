@@ -59,17 +59,11 @@ return [
     /**
      * Keys that verify the signature on incoming payment webhooks
      *
-     * A webhook is accepted when it is signed with any key in the list, so
-     * the key can be rotated without turning webhooks away. To rotate:
-     *
-     *  1. add the new key as the second item, and roll out;
-     *  2. switch the sender to the new key;
-     *  3. remove the old key, and roll out.
-     *
-     * Each key is 32 to 256 characters, so an empty or truncated key fails
-     * at boot. Without this variable, the service rejects every webhook.
+     * A webhook is accepted when it is signed with any key in the set. Each
+     * key is 32 to 256 characters, so an empty or truncated key fails at
+     * boot. Without this variable, the service rejects every webhook.
      */
-    'webhook_keys' => Env::list('WEBHOOK_KEYS', secret: true, minItems: 1, maxItems: 2, itemMinLength: 32, itemMaxLength: 256),
+    'webhook_keys' => Env::keySet('WEBHOOK_KEYS', keyMinLength: 32, keyMaxLength: 256),
 ];
 ```
 
@@ -87,7 +81,7 @@ exported as `details`, which `docuconf docs` renders into `CONFIG.md`.
 | `ALLOWED_ORIGINS` | list of strings, comma-separated | at least 1 item; default `http://localhost:3000` |
 | `REQUEST_TIMEOUT` | duration, Go syntax (`45s`, `1m30s`) | `1s`–`5m`, default `30s` |
 | `WORKER_COUNT` | int | 1–64, default `4` |
-| `WEBHOOK_KEYS` | list of strings, comma-separated | secret, optional; 1–2 keys of 32–256 characters each |
+| `WEBHOOK_KEYS` | key set, comma-separated | secret, optional; 1–2 keys of 32–256 characters each |
 
 ## 3. Run
 
@@ -140,9 +134,11 @@ checks both, and the webhook key set below (`./smoke.sh`); CI runs it on every p
 
 ## Rotate a key
 
-`WEBHOOK_KEYS` is a key set: `POST /webhooks/payments` accepts a body whose `X-Signature` header is the hex
-HMAC-SHA256 of the body under any key in the list ([`app/Webhooks.php`](app/Webhooks.php)). It is one
-comma-separated value, so one Kubernetes Secret key holds it:
+`WEBHOOK_KEYS` is a `keySet` (SPEC §4.3), declared with `Env::keySet()`: `POST /webhooks/payments` accepts a body
+whose `X-Signature` header is the hex HMAC-SHA256 of the body under any key in the set. The route reads it as a
+`Docuconf\KeySet` from the validated values, and [`app/Webhooks.php`](app/Webhooks.php) passes the check to
+`KeySet::verify()`, which tries every key. `docuconf docs` prints the rotation steps for a key set, so
+[`CONFIG.md`](CONFIG.md) has them too. It is one comma-separated value, so one Kubernetes Secret key holds it:
 
 ```yaml
 WEBHOOK_KEYS: # a key set: one Secret key holding "old,new" while rotating
@@ -156,13 +152,13 @@ at once, no webhook is turned away while that happens:
 2. Switch the sender to the new key.
 3. Remove the old key (`new`), and roll out.
 
-The contract allows 1 or 2 keys of 32 to 256 characters each, so a trailing comma or a truncated key stops the
-service at boot instead of locking out the sender, without printing the key:
+The contract allows 1 or 2 keys (a key set's defaults) of 32 to 256 characters each, so a trailing comma or a
+truncated key stops the service at boot instead of locking out the sender, without printing the key:
 
 ```console
 $ WEBHOOK_KEYS=old-webhook-key-0123456789abcdef0123, php artisan serve
 docuconf: 1 configuration problem:
-  - WEBHOOK_KEYS [out_of_range]: has an item shorter than itemMinLength 32 (0 characters)
+  - WEBHOOK_KEYS [out_of_range]: has an empty key (key 2 of 2): a stray separator, or an unset item
 ```
 
 [`smoke.sh`](smoke.sh) posts webhooks signed with both keys, and

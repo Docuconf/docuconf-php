@@ -198,6 +198,11 @@ final class Declaration
         $processEnv = $env === null;
         $env ??= $this->environment();
         $result = Loader::load($this->spec(), $env);
+        if ($processEnv) {
+            // A real boot: warn about deprecated inputs that are set (by
+            // name and message, never the value) and likely typos.
+            Console::warnings($result->warnings);
+        }
         if (!$result->ok()) {
             $error = new ConfigurationError($result->violations);
             TerminationLog::write($error->getMessage(), $env, $processEnv);

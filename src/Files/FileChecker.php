@@ -27,6 +27,23 @@ final class FileChecker
      */
     public static function check(FileSpec $f, array $env, ?int $now = null): array
     {
+        [$loaded, $violations] = self::checkOnce($f, $env, $now);
+        if ($loaded !== null && $f->reload === 'watch') {
+            // SPEC §11.2 item 8: re-read the input when it changes.
+            $paths = $f->type === 'tls'
+                ? array_map(fn (string $n) => "{$loaded->path}/$n", $f->requireCA ? ['tls.crt', 'tls.key', 'ca.crt'] : ['tls.crt', 'tls.key'])
+                : [$loaded->path];
+            $loaded->watch($paths, fn () => self::checkOnce($f, $env, null));
+        }
+        return [$loaded, $violations];
+    }
+
+    /**
+     * @param array<string, string> $env
+     * @return array{?LoadedFile, list<Violation>}
+     */
+    private static function checkOnce(FileSpec $f, #[\SensitiveParameter] array $env, ?int $now): array
+    {
         $path = self::resolvePath($f, $env);
         $name = $f->name;
         $fail = fn (string $code, string $msg) => [null, [new Violation($name, $code, $msg)]];

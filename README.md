@@ -197,7 +197,7 @@ prefix where Laravel already reads a name: `config/logging.php` reads `LOG_LEVEL
 - `php artisan docuconf:export --output=contract.cue` writes the contract (`--check` for CI);
   `php artisan docuconf:check` validates without starting anything, for a container entrypoint.
 - `app(Docuconf\Values::class)` holds every typed value; `->redacted()` is safe to log or serve.
-- Helpers: `Env::string`, `int`, `float`, `bool`, `duration`, `url`, `enum`, `list`, `json`, and
+- Helpers: `Env::string`, `int`, `float`, `bool`, `duration`, `url`, `enum`, `list`, `keySet`, `json`, and
   `Env::declare(fn (Docuconf\Declaration $env) => ...)` for file inputs and anything else.
 - `'presets' => ['laravel']` in `config/docuconf.php` also declares the variables Laravel reads itself, so the
   contract covers them: `APP_KEY` (secret, required), `APP_ENV`, `APP_DEBUG`, `APP_URL`, `LOG_LEVEL`, `DB_URL`
@@ -315,17 +315,30 @@ final class ConfigTest extends KernelTestCase
 | `isString()` (the default) | `string` | `minLength()`, `maxLength()`, `notEmpty()`, `pattern()` |
 | `isInteger()` | `int` | `min()`, `max()`, `between()` |
 | `isFloat()` | `float` | `min()`, `max()`, `between()` |
-| `isBoolean()` | `bool` (`true`/`false`, also phpdotenv's `yes`/`on`/`1`...) | |
+| `isBoolean()` | `bool` (`true`/`false` in any case, nothing else) | |
 | `isDuration($encoding = 'go')` | `Docuconf\Duration` | `min()`, `max()`, `between()` with `'1s'`, the encoding's own form, or a Duration |
 | `isUrl(...$schemes)` | `string` | `schemes()`, `maxLength()` |
 | `allowedValues([...])` or `allowedValues(MyEnum::class)` | `string` | |
 | `isList($items = 'string', $encoding = 'csv', $separator = ',')` | `list<string>` or `list<int>` | `minItems()`, `maxItems()`, `itemsBetween($min, $max)` (int items), `itemMinLength()`, `itemMaxLength()` (string items) |
+| `isKeySet($encoding = 'csv', $separator = ',')` | `Docuconf\KeySet`, always secret | `minKeys()` (default 1), `maxKeys()` (default 2), `keyMinLength()`, `keyMaxLength()` |
 | `isJson(MyClass::class)` or `isJson($jsonSchema)` | an instance, or decoded JSON | the JSON Schema, `maxLength()` |
 
 Every variable also takes `describe()` (required, 5+ characters, unless a PHPDoc comment gives it), `details()`,
-`secret()`, `default()`, `group()`, `examples()`, `configKey()` and `deprecated()`. Mistakes in the declaration
+`secret()`, `default()`, `group()`, `examples()`, `configKey()` and `deprecated($message, $replacedBy)`. Mistakes in the declaration
 itself (a bad name, a short description, a constraint that does not fit the type, a default that breaks its own
-rules, a non-RE2 pattern) throw `Docuconf\DeclarationError` when the declaration is first used.
+rules, a non-RE2 pattern, a deprecated variable that is required or has a blank message, or one longer than 500
+characters) throw `Docuconf\DeclarationError` when the declaration is first used. A deprecated variable that is set
+still loads and is still checked; at boot (`load()` and `loadOrExit()` on the process environment, and every
+Laravel or Symfony console command that runs the app) docuconf logs a warning naming it and its message, never its
+value.
+
+**Parsing** follows SPEC §5 exactly, whatever phpdotenv or PHP would accept: values are never trimmed (`" 8080"`
+and `"true\n"` fail, and `a, b` in a csv list is `a` and ` b`); a `bool` is `true` or `false` in any case (`TRUE`,
+`False`), never `1`, `yes` or `on`; an `int` is decimal digits with an optional sign (`007` is 7, never octal;
+`0x10`, `1_000` and `1e3` fail); a `float` has digits on both sides of an optional point (`.5`, `5.`, `inf` and
+`nan` fail); a `go` duration takes Go's grammar, sign included (`-5s`, `1.5h`, but not `5`, `5S` or `1d`); an
+`iso8601` one `P[nD][T[nH][nM][nS]]` (no weeks, months or years); a `seconds` one an unsigned decimal; and a
+`timespan` one `[d.]hh:mm:ss[.f]`. Any other form is `invalid_type`.
 
 ### Descriptions and details
 
@@ -363,21 +376,34 @@ counts. A value out of bounds is `out_of_range`, and a secret is reported by its
 `Env::url()` and `Env::json()` helpers take `maxLength:`, and `Env::list()` takes `itemMinLength:` and
 `itemMaxLength:` (and the Symfony bundle the `itemMinLength` and `itemMaxLength` keys).
 
-**Key sets.** A secret list of one or two keys lets a key be rotated with no downtime
-([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)): one Secret key holds
-`old,new` during the overlap, and the item lengths catch an empty or truncated key at boot. Both examples declare one
-as `WEBHOOK_KEYS`: `Env::list('WEBHOOK_KEYS', secret: true, minItems: 1, maxItems: 2, itemMinLength: 32,
-itemMaxLength: 256)` in Laravel, the same keys in `docuconf.yaml`.
+**Key sets.** A `keySet` (SPEC §4.3) holds secret keys that are all valid at once, so a key can be rotated with no
+downtime ([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)): one Secret
+key holds `old,new` during the overlap. It is always secret, holds 1 to 2 keys unless `minKeys()` and `maxKeys()`
+say otherwise, and an empty key (a stray separator) is `out_of_range` whatever `keyMinLength()` says. Its value is a
+`Docuconf\KeySet`: the keys in order, `contains($candidate)` in constant time, and `verify($check)`, which runs your
+check (such as an HMAC comparison) with every key without stopping at the first match:
 
-**Encodings.** Lists are `csv` (`a,b`), `json` (`["a","b"]`) or `indexed` (`NAME__0`, `NAME__1`, numbered from
-0 with no gap); durations are `go` (`1m30s`), `iso8601` (`PT90S`), `seconds` (`90`) or `timespan` (`00:01:30`).
+```php
+<?php
+$env->ifPresent('WEBHOOK_KEYS')->isKeySet()->keyMinLength(32)->describe('Keys that verify webhook signatures');
+
+$keys = $config->keySet('WEBHOOK_KEYS');      // Docuconf\KeySet, or null when unset; prints as ***
+$ok = $keys?->verify(fn (string $key) => hash_equals(hash_hmac('sha256', $body, $key), $signature)) ?? false;
+```
+
+Laravel's `Env::keySet('WEBHOOK_KEYS', keyMinLength: 32)` returns the keys as `env()` would, for `config:cache`;
+`app(Docuconf\Values::class)->keySet('WEBHOOK_KEYS')` gives the `KeySet`. In Symfony YAML it is
+`{type: keySet, description: ..., keyMinLength: 32}`. Both examples verify webhooks with one.
+
+**Encodings.** Lists and key sets are `csv` (`a,b`), `json` (`["a","b"]`) or `indexed` (`NAME__0`, `NAME__1`,
+numbered from 0 with no gap); durations are `go` (`1m30s`), `iso8601` (`PT90S`), `seconds` (`90`) or `timespan` (`00:01:30`).
 The contract records the encoding, so the platform renders values the way the app parses them. A duration's
 `default()` and bounds may be written in Go form or in the variable's own encoding
 (`->isDuration('iso8601')->default('PT30S')`); the contract stores Go form.
 
 ### Typed access and secrets
 
-`$config->int('PORT')`, `string()`, `float()`, `bool()`, `duration()`, `list()`, `json()` and `$config['PORT']`
+`$config->int('PORT')`, `string()`, `float()`, `bool()`, `duration()`, `list()`, `keySet()`, `json()` and `$config['PORT']`
 return the typed value, or `null` for an optional variable that is unset. To get a class instead of strings,
 bind to a readonly class: each constructor parameter reads the variable of the same name in
 SCREAMING_SNAKE_CASE, or the one `#[Docuconf\FromEnv('NAME')]` names.
@@ -481,11 +507,19 @@ TLS that the key matches the certificate, the certificate is valid now with `min
 `dnsNames` (a wildcard covers one label), uses an allowed key algorithm and, with `requireCA()`, chains to
 `ca.crt`. `DOCUCONF_FILE_ROOT` prefixes every absolute path, for local runs and tests.
 
+**Reloading.** An input declared `->reload('watch')` is re-read when it changes (a renewed certificate, an edited
+ConfigMap): reading `$file->value` or `$file->content` looks at its files at most once a second, and
+`$file->refresh()` looks at once. Kubernetes swaps a symlink to update a mounted file, which shows up as a different
+file. A change that fails its checks is not used: the previous content stays, and the failure goes to the error log.
+A TLS key pair, CA bundle, keystore or binary file is opened by your code from its path, so it sees a new file on its
+own; watching it re-runs the checks.
+
 **Config types.** A class used with `isJson()` or `schema()` is read by reflection: constructor parameters (or
 public properties) typed `int`, `float`, `string`, `bool`, nullable types, backed enums, `Docuconf\Duration`,
 nested classes and arrays with an item type from `#[Docuconf\Schema\ListOf(Route::class)]` or a `list<Route>`
-docblock. `#[Docuconf\Schema\Field(minimum: 1, pattern: '^/')]` adds JSON Schema keywords. Unknown properties are
-rejected.
+docblock. `#[Docuconf\Schema\Field(minimum: 1, pattern: '^/')]` adds JSON Schema keywords, and
+`#[Field(nullable: false)]` on a `?int $burst = null` parameter makes the key optional but never `null`, with no
+default in the schema. Unknown properties are rejected.
 
 ### Boot errors
 
@@ -519,6 +553,15 @@ It parses every list and duration encoding and runs the same checks as the decla
 runs through it. The contract is read strictly, as the CUE `#Contract` is closed: an unknown key (`secert`) or a
 loosely typed one (`secret: "no"`) is an error, never a dropped rule.
 
+It also reads file inputs (config files in json, yaml and toml, TLS key pairs, CA bundles, PKCS#12 keystores, text
+and binary files) under `DOCUCONF_FILE_ROOT`, and a contract's `profiles` and `overlays` (SPEC §4.4, §4.7), layered
+in a fixed order: a variable's default, then the selected profile's default (the selector's value, or
+`profiles.default`), then a config-file overlay (read from its path under `DOCUCONF_FILE_ROOT`; a missing one is not
+an error, one that does not parse is `file_malformed` for the overlay), then the environment. Overlay values are
+read at their `configKey`, converted to the strings they stand for and checked like env values; a secret in an
+overlay is `invalid_type`. Overlays are read once, so `reload: watch` on an overlay is rejected. The declaration API
+has no profiles or overlays: Laravel and Symfony layer their own config files.
+
 ### Conformance
 
 `tests/ConformanceTest.php` runs docuconf-go's shared suite (`conformance/cases.json`, SPEC §12) through
@@ -529,8 +572,22 @@ $ DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CO
 ```
 
 Without `DOCUCONF_CONFORMANCE` it looks for `../docuconf-go/conformance/cases.json`, and skips when that is
-missing unless `DOCUCONF_REQUIRE_CONFORMANCE=1`. **No capability tags are skipped:** PHP holds every 64-bit integer
-(`int64`), and json values are validated with opis/json-schema (`json-schema`).
+missing unless `DOCUCONF_REQUIRE_CONFORMANCE=1`. **No capability tags are skipped, and no case is:** the runner
+keeps the list of tags this SDK supports, which is all of them (`int64`, `json-schema`, `key-set`, `deprecated`,
+`strict-parsing`, `files`, `profiles` and `overlays`), skips a case only for a tag outside that list (such as one it
+has never heard of), and fails when `DOCUCONF_REQUIRE_CONFORMANCE=1` and any case would be skipped. PHP holds every
+64-bit integer (`int64`), json values are validated with opis/json-schema (`json-schema`), and PKCS#12 keystores
+(AES-256-CBC with a SHA-256 MAC) open with PHP's OpenSSL extension.
+
+`tests/ConformanceExportTest.php` declares docuconf-go's export fixture (`conformance/export/fixture.yaml`) in
+[`tests/Fixtures/conformance_export.php`](tests/Fixtures/conformance_export.php), exports it, and compares it with
+`conformance/export/golden.cue` using `docuconf conformance export` from the
+[docuconf CLI](https://github.com/docuconf/docuconf-go) (`DOCUCONF_CLI`, or `docuconf` on `PATH`).
+`scripts/conformance.sh` runs both, with `--fail-on-skipped`:
+
+```console
+$ DOCUCONF_GO_DIR=../docuconf-go scripts/conformance.sh
+```
 
 ## Development
 
@@ -547,8 +604,8 @@ declarations.
 
 ## Not supported yet
 
-- `reload: watch`: files are read at boot, so `watch` is rejected when declared rather than promised.
-- Config-file overlays and profiles (SPEC §4.4, §4.7); a contract that uses them is rejected.
+- Profiles and config-file overlays in the declaration API (contract-first mode has them), and `reload: watch` on
+  an overlay.
 - JKS keystores are checked by their integrity digest (password and corruption), not opened; PKCS#12 keystores are
   opened with OpenSSL, which rejects legacy ciphers such as RC2 unless its legacy provider is loaded.
 - A Symfony Flex recipe, so the bundle registers itself.

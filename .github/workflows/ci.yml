@@ -61,6 +61,11 @@ jobs:
       - name: Install cue
         run: go install cuelang.org/go/cmd/cue@v0.17.1
 
+      # For the shared export check (tests/ConformanceExportTest.php).
+      - name: Install the docuconf CLI
+        working-directory: docuconf-go/cmd/docuconf
+        run: go install .
+
       - name: Install
         run: composer update --no-interaction --no-progress --prefer-dist
 
@@ -71,10 +76,13 @@ jobs:
       - name: PHPStan
         run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
-      # Includes the conformance suite (tests/ConformanceTest.php) and cue vet
-      # of the golden export (tests/ExportTest.php); both fail rather than skip here.
+      # Includes the conformance suite (tests/ConformanceTest.php), the shared
+      # export check (tests/ConformanceExportTest.php) and cue vet of the golden
+      # export (tests/ExportTest.php); they fail rather than skip here, and
+      # --fail-on-skipped fails the run on any skipped test, including a
+      # conformance case that requires a tag this SDK does not support.
       - name: PHPUnit
-        run: vendor/bin/phpunit
+        run: vendor/bin/phpunit --fail-on-skipped
         env:
           DOCUCONF_SPEC_CUE: ${{ github.workspace }}/docuconf-go/spec/cue
           DOCUCONF_REQUIRE_VET: "1"

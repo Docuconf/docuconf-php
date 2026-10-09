@@ -27,9 +27,19 @@ final class Tls
         $fail = function (string $code, string $msg) use (&$out, $f): void {
             $out[] = new Violation($f->name, $code, $msg);
         };
+        // SPEC §11.2 item 5: a file with no PEM certificate or key at all is
+        // file_malformed; one whose PEM does not parse is certificate_invalid.
+        if (!self::hasPem($files['tls.crt'], 'CERTIFICATE')) {
+            $fail('file_malformed', 'tls.crt holds no PEM certificate');
+            return $out;
+        }
+        if (!self::hasPem($files['tls.key'], '[A-Z0-9 ]*PRIVATE KEY')) {
+            $fail('file_malformed', 'tls.key holds no PEM private key');
+            return $out;
+        }
         $chain = self::parseBundle($files['tls.crt']);
         if ($chain === []) {
-            $fail('certificate_invalid', 'tls.crt is not a PEM certificate');
+            $fail('certificate_invalid', 'tls.crt holds a PEM certificate that does not parse');
             return $out;
         }
         $leaf = $chain[0];
@@ -78,13 +88,21 @@ final class Tls
 
         if ($f->requireCA) {
             $cas = self::parseBundle($files['ca.crt'] ?? '');
-            if ($cas === []) {
-                $fail('certificate_invalid', 'ca.crt holds no PEM certificate');
+            if (!self::hasPem($files['ca.crt'] ?? '', 'CERTIFICATE')) {
+                $fail('file_malformed', 'ca.crt holds no PEM certificate');
+            } elseif ($cas === []) {
+                $fail('certificate_invalid', 'ca.crt holds no PEM certificate that parses');
             } elseif (!self::chainsTo($leaf, array_slice($chain, 1), $caPath)) {
                 $fail('certificate_invalid', 'the certificate does not chain to a CA in ca.crt');
             }
         }
         return $out;
+    }
+
+    /** Whether $pem holds a PEM block whose label matches $label (a regex fragment). */
+    public static function hasPem(string $pem, string $label): bool
+    {
+        return preg_match('/-----BEGIN ' . $label . '-----.+?-----END ' . $label . '-----/s', $pem) === 1;
     }
 
     /**
@@ -118,17 +136,18 @@ final class Tls
         if ($details === false) {
             return null;
         }
+        // Look for the Ed25519 OID (1.3.101.112) in the SubjectPublicKeyInfo
+        // first: PHP has no key type constant for it before 8.4, and some
+        // older builds report an Ed25519 key with the EC type.
+        $der = base64_decode(preg_replace('/-----[^-]+-----|\s/', '', (string) $details['key']) ?? '', true);
+        if ($der !== false && str_contains(substr($der, 0, 16), "\x06\x03\x2b\x65\x70")) {
+            return 'Ed25519';
+        }
         if ($details['type'] === OPENSSL_KEYTYPE_RSA) {
             return 'RSA';
         }
         if ($details['type'] === OPENSSL_KEYTYPE_EC) {
             return 'ECDSA';
-        }
-        // PHP has no key type constant for Ed25519 before 8.4: look for its
-        // OID (1.3.101.112) in the SubjectPublicKeyInfo.
-        $der = base64_decode(preg_replace('/-----[^-]+-----|\s/', '', (string) $details['key']) ?? '', true);
-        if ($der !== false && str_contains(substr($der, 0, 16), "\x06\x03\x2b\x65\x70")) {
-            return 'Ed25519';
         }
         return null;
     }

@@ -9,11 +9,12 @@ use JsonSerializable;
 use Stringable;
 
 /**
- * A non-negative length of time, held exactly in nanoseconds.
+ * A length of time, held exactly in nanoseconds.
  *
  * Contracts write durations in Go syntax ("1m30s"); the app's env may carry
  * them in any of the wire encodings of SPEC §5 (go, iso8601, seconds,
- * timespan). Both parse into this one type.
+ * timespan). Both parse into this one type. Only the go encoding takes a
+ * sign, so only it can give a negative duration ("-5s").
  */
 final class Duration implements JsonSerializable, Stringable
 {
@@ -60,19 +61,27 @@ final class Duration implements JsonSerializable, Stringable
     }
 
     /**
-     * Parses a duration written in Go syntax ("1m30s", "1.5h", "250ms").
+     * Parses a duration written in Go syntax, exactly as Go's
+     * time.ParseDuration reads it (SPEC §5): an optional sign, then "0" or
+     * numbers each followed by a unit ("1m30s", "1.5h", "-250ms", "+5s").
      *
      * @throws InvalidArgumentException when the text is not a valid Go duration
      */
     public static function fromGo(string $text): self
     {
-        if ($text === '0') {
+        $negative = false;
+        $body = $text;
+        if ($body !== '' && ($body[0] === '-' || $body[0] === '+')) {
+            $negative = $body[0] === '-';
+            $body = substr($body, 1);
+        }
+        if ($body === '0') {
             return new self(0);
         }
-        if ($text === '' || !preg_match('/^(?:[0-9]*(?:\.[0-9]*)?(?:ns|us|µs|μs|ms|s|m|h))+$/u', $text)) {
+        if ($body === '' || !preg_match('/^(?:[0-9]*(?:\.[0-9]*)?(?:ns|us|µs|μs|ms|s|m|h))+$/Du', $body)) {
             throw new InvalidArgumentException('not a Go duration, such as 1m30s');
         }
-        preg_match_all('/([0-9]*)(?:\.([0-9]*))?(ns|us|µs|μs|ms|s|m|h)/u', $text, $parts, PREG_SET_ORDER);
+        preg_match_all('/([0-9]*)(?:\.([0-9]*))?(ns|us|µs|μs|ms|s|m|h)/u', $body, $parts, PREG_SET_ORDER);
         $total = 0;
         foreach ($parts as [, $int, $frac, $unit]) {
             if ($int === '' && $frac === '') {
@@ -80,7 +89,7 @@ final class Duration implements JsonSerializable, Stringable
             }
             $total = self::add($total, self::decimal($int, $frac, self::GO_UNITS[$unit]));
         }
-        return new self($total);
+        return new self($negative ? -$total : $total);
     }
 
     /**
@@ -101,17 +110,18 @@ final class Duration implements JsonSerializable, Stringable
 
     /**
      * ISO 8601 durations with days, hours, minutes and (fractional) seconds:
-     * "PT90S", "PT1.5S", "P1DT2H". Years and months have no fixed length,
-     * so they are rejected.
+     * "PT90S", "PT1.5S", "PT1,5S", "P1DT2H". Upper case and unsigned. Years,
+     * months and weeks are rejected: years and months have no fixed length,
+     * and SPEC §5 leaves weeks out with them.
      */
     public static function fromIso8601(string $text): self
     {
         $num = '([0-9]+)(?:[.,]([0-9]+))?';
-        $re = "/^P(?:{$num}W)?(?:{$num}D)?(?:T(?:{$num}H)?(?:{$num}M)?(?:{$num}S)?)?$/";
+        $re = "/^P(?:{$num}D)?(?:T(?:{$num}H)?(?:{$num}M)?(?:{$num}S)?)?$/D";
         if (!preg_match($re, $text, $m, PREG_UNMATCHED_AS_NULL) || $text === 'P' || str_ends_with($text, 'T')) {
             throw new InvalidArgumentException('not an ISO 8601 duration, such as PT90S');
         }
-        $units = [7 * 24 * self::HOUR, 24 * self::HOUR, self::HOUR, self::MINUTE, self::SECOND];
+        $units = [24 * self::HOUR, self::HOUR, self::MINUTE, self::SECOND];
         $total = 0;
         foreach ($units as $i => $unit) {
             $int = $m[1 + 2 * $i] ?? null;
@@ -125,19 +135,22 @@ final class Duration implements JsonSerializable, Stringable
     /** A plain decimal number of seconds: "90", "1.5". */
     public static function fromSeconds(string $text): self
     {
-        if (!preg_match('/^([0-9]+)(?:\.([0-9]+))?$/', $text, $m)) {
+        if (!preg_match('/^([0-9]+)(?:\.([0-9]+))?$/D', $text, $m)) {
             throw new InvalidArgumentException('not a number of seconds, such as 90 or 1.5');
         }
         return new self(self::decimal($m[1], $m[2] ?? '', self::SECOND));
     }
 
-    /** .NET TimeSpan form: "[d.]hh:mm[:ss[.fffffff]]". */
+    /**
+     * .NET TimeSpan form, as SPEC §5 reads it: "[d.]hh:mm:ss[.fffffff]", with
+     * hh one or two digits below 24, mm and ss two digits below 60. Unsigned.
+     */
     public static function fromTimespan(string $text): self
     {
-        if (!preg_match('/^(?:([0-9]+)\.)?([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\.([0-9]{1,7}))?)?$/', $text, $m)) {
+        if (!preg_match('/^(?:([0-9]+)\.)?([0-9]{1,2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]{1,7}))?$/D', $text, $m)) {
             throw new InvalidArgumentException('not a .NET TimeSpan, such as 00:01:30');
         }
-        [$h, $min, $s] = [(int) $m[2], (int) $m[3], (int) ($m[4] ?? 0)];
+        [$h, $min, $s] = [(int) $m[2], (int) $m[3], (int) $m[4]];
         if ($h > 23 || $min > 59 || $s > 59) {
             throw new InvalidArgumentException('not a .NET TimeSpan, such as 00:01:30');
         }
@@ -156,8 +169,8 @@ final class Duration implements JsonSerializable, Stringable
         if ($this->nanoseconds === 0) {
             return '0s';
         }
-        $out = '';
-        $rest = $this->nanoseconds;
+        $out = $this->nanoseconds < 0 ? '-' : '';
+        $rest = abs($this->nanoseconds);
         foreach (['h' => self::HOUR, 'm' => self::MINUTE, 's' => self::SECOND, 'ms' => self::MILLISECOND, 'us' => self::MICROSECOND, 'ns' => 1] as $unit => $size) {
             $n = intdiv($rest, $size);
             $rest -= $n * $size;
@@ -197,9 +210,11 @@ final class Duration implements JsonSerializable, Stringable
 
     public function toDateInterval(): \DateInterval
     {
-        $secs = intdiv($this->nanoseconds, self::SECOND);
+        $abs = abs($this->nanoseconds);
+        $secs = intdiv($abs, self::SECOND);
         $interval = new \DateInterval('PT' . $secs . 'S');
-        $interval->f = ($this->nanoseconds % self::SECOND) / self::SECOND;
+        $interval->f = ($abs % self::SECOND) / self::SECOND;
+        $interval->invert = $this->nanoseconds < 0 ? 1 : 0;
         return $interval;
     }
 

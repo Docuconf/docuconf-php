@@ -62,13 +62,13 @@ fi
 grep -q 'PORT \[out_of_range\]' "$tmp/cmd.txt" || { echo "migrate:status output lacks the report:" >&2; cat "$tmp/cmd.txt" >&2; exit 1; }
 echo "migrate:status with PORT=0: refused"
 
-# 3b. A key set with an empty second key (a trailing comma): the item length
-# constraint fails it at boot, without printing the key.
+# 3b. A key set with an empty second key (a trailing comma) fails at boot,
+# without printing the key.
 if PORT=$port DATABASE_URL="$secret" WEBHOOK_KEYS="$old_key," "$php" artisan serve --port="$port" >"$tmp/bad.txt" 2>&1; then
   echo "service started with an empty webhook key" >&2; exit 1
 fi
 expected='docuconf: 1 configuration problem:
-  - WEBHOOK_KEYS [out_of_range]: has an item shorter than itemMinLength 32 (0 characters)'
+  - WEBHOOK_KEYS [out_of_range]: has an empty key (key 2 of 2): a stray separator, or an unset item'
 if [ "$(cat "$tmp/bad.txt")" != "$expected" ] || grep -q webhook-key "$tmp/bad.txt"; then
   echo "unexpected output for an empty webhook key:" >&2; diff <(echo "$expected") "$tmp/bad.txt" >&2; exit 1
 fi

@@ -30,6 +30,13 @@ final class Field
         public readonly ?string $pattern = null,
         public readonly ?int $minItems = null,
         public readonly ?int $maxItems = null,
+        /**
+         * False for a nullable property with a null default that the file
+         * may leave out but never set to null: its schema is the non-null
+         * type, with no default, as an omitted optional key in Go or
+         * TypeScript (`public readonly ?int $burst = null`).
+         */
+        public readonly bool $nullable = true,
     ) {
     }
 }

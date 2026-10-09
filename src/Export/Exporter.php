@@ -59,6 +59,29 @@ final class Exporter
                 $out['files'][$name] = self::file($file);
             }
         }
+        if ($contract->profiles !== null) {
+            $profiles = ['selector' => $contract->profiles->selector, 'default' => $contract->profiles->default];
+            if ($contract->profiles->defaults !== []) {
+                $profiles['defaults'] = [];
+                foreach ($contract->profiles->defaults as $profile => $values) {
+                    ksort($values, SORT_STRING);
+                    $profiles['defaults'][$profile] = $values === [] ? new \stdClass() : array_map(self::plain(...), $values);
+                }
+            }
+            $out['profiles'] = $profiles;
+        }
+        if ($contract->overlays !== []) {
+            $out['overlays'] = [];
+            foreach ($contract->sortedOverlays() as $name => $o) {
+                $overlay = [];
+                self::put($overlay, 'description', $o->description);
+                $overlay += ['format' => $o->format, 'path' => $o->path, 'keySeparator' => $o->keySeparator];
+                if ($o->reload !== 'restart') {
+                    $overlay['reload'] = $o->reload;
+                }
+                $out['overlays'][$name] = $overlay;
+            }
+        }
         return $out;
     }
 
@@ -108,6 +131,16 @@ final class Exporter
                 self::put($o, 'itemMax', $v->itemMax);
                 self::put($o, 'itemMinLength', $v->itemMinLength);
                 self::put($o, 'itemMaxLength', $v->itemMaxLength);
+                break;
+            case 'keySet':
+                $o['encoding'] = $v->encoding();
+                if ($v->encoding() === 'csv') {
+                    $o['separator'] = $v->separator;
+                }
+                $o['minKeys'] = $v->minKeys();
+                $o['maxKeys'] = $v->maxKeys();
+                self::put($o, 'keyMinLength', $v->keyMinLength);
+                self::put($o, 'keyMaxLength', $v->keyMaxLength);
                 break;
             case 'json':
                 self::put($o, 'maxLength', $v->maxLength);
@@ -194,6 +227,11 @@ final class Exporter
     {
         if ($value instanceof Duration) {
             return $value->toString();
+        }
+        if ($value instanceof \Docuconf\KeySet) {
+            // The keys, as env() would give them; redacted() never gets here
+            // for a secret.
+            return $value->reveal();
         }
         if ($value instanceof \BackedEnum) {
             return $value->value;

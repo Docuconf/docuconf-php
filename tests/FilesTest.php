@@ -128,9 +128,61 @@ final class FilesTest extends TestCase
         self::assertSame([['serving-tls', 'certificate_invalid']], $this->codes($this->tls(fn ($f) => $f->keyAlgorithms('RSA'))));
     }
 
+    public function testWatchedConfigFileIsReread(): void
+    {
+        $d = Env::declare('svc');
+        $d->configFile('settings', '/etc/svc/settings/settings.json')->required()->reload('watch')
+            ->schema(['type' => 'object', 'required' => ['port']])->describe('Service settings');
+        // Kubernetes swaps a symlink to update a projected file.
+        $this->put('/etc/svc/settings/..v1/settings.json', '{"port": 1}');
+        symlink($this->root . '/etc/svc/settings/..v1/settings.json', $this->root . '/etc/svc/settings/settings.json');
+        $file = $d->load($this->env())->file('settings');
+        self::assertNotNull($file);
+        self::assertTrue($file->watched());
+        self::assertSame(['port' => 1], $file->value);
+        self::assertFalse($file->refresh(), 'nothing changed');
+
+        $this->put('/etc/svc/settings/..v2/settings.json', '{"port": 2}');
+        unlink($this->root . '/etc/svc/settings/settings.json');
+        symlink($this->root . '/etc/svc/settings/..v2/settings.json', $this->root . '/etc/svc/settings/settings.json');
+        self::assertTrue($file->refresh());
+        self::assertSame(['port' => 2], $file->value);
+
+        // A change that fails its checks is logged, and the last good content stays.
+        $log = tempnam(sys_get_temp_dir(), 'docuconf-log');
+        $previous = ini_set('error_log', (string) $log);
+        try {
+            $this->put('/etc/svc/settings/..v3/settings.json', '{"other": 3}');
+            unlink($this->root . '/etc/svc/settings/settings.json');
+            symlink($this->root . '/etc/svc/settings/..v3/settings.json', $this->root . '/etc/svc/settings/settings.json');
+            self::assertFalse($file->refresh());
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        self::assertSame(['port' => 2], $file->value);
+        self::assertStringContainsString('file settings changed, but the new content fails its checks', (string) file_get_contents((string) $log));
+        unlink((string) $log);
+    }
+
+    public function testRestartIsNotWatched(): void
+    {
+        $d = Env::declare('svc');
+        $d->text('licence', '/etc/svc/licence/key')->required()->describe('Licence key');
+        $this->put('/etc/svc/licence/key', 'one');
+        $file = $d->load($this->env())->file('licence');
+        self::assertNotNull($file);
+        $this->put('/etc/svc/licence/key', 'two, longer');
+        self::assertFalse($file->refresh());
+        self::assertSame('one', $file->value);
+    }
+
     public function testMalformedCertificate(): void
     {
+        // No PEM at all is file_malformed; PEM that does not parse is certificate_invalid (SPEC §11.2 item 5).
         Certs::writeTlsDir($this->root . '/etc/svc/tls', 'not a certificate', 'not a key');
+        self::assertSame([['serving-tls', 'file_malformed']], $this->codes($this->tls()));
+        [, $key] = Certs::issue(['svc.internal'], 365);
+        Certs::writeTlsDir($this->root . '/etc/svc/tls', "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydA==\n-----END CERTIFICATE-----\n", $key);
         self::assertSame([['serving-tls', 'certificate_invalid']], $this->codes($this->tls()));
     }
 

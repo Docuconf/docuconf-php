@@ -24,7 +24,7 @@ final class ConfigFormat
                 $flags = \Symfony\Component\Yaml\Yaml::PARSE_OBJECT_FOR_MAP | \Symfony\Component\Yaml\Yaml::PARSE_EXCEPTION_ON_INVALID_TYPE;
                 return Json::normalize(\Symfony\Component\Yaml\Yaml::parse($data, $flags));
             case 'toml':
-                return Json::normalize(self::tomlToPlain(\Devium\Toml\Toml::decode($data, true)));
+                return Json::normalize(self::tomlToPlain(\Devium\Toml\Toml::decode($data, asArray: true, asFloat: true)));
         }
         throw new \InvalidArgumentException("unknown config format \"$format\"");
     }

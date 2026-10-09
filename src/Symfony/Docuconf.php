@@ -125,7 +125,7 @@ final class Docuconf
             }
         }
         foreach ($spec->vars as $name => $var) {
-            if ($var->type === 'list' && $var->encoding() === 'indexed') {
+            if (($var->type === 'list' || $var->type === 'keySet') && $var->encoding() === 'indexed') {
                 for ($i = 0; ($value = $this->resolve("{$name}__$i")) !== null; $i++) {
                     $env["{$name}__$i"] = $value;
                 }

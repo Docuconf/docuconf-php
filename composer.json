@@ -21,7 +21,7 @@
         "vlucas/phpdotenv": "^5.6"
     },
     "require-dev": {
-        "devium/toml": "^1.0",
+        "devium/toml": "^1.1",
         "illuminate/console": "^11.0 || ^12.0 || ^13.0",
         "illuminate/support": "^11.0 || ^12.0 || ^13.0",
         "orchestra/testbench": "^9.0 || ^10.0 || ^11.0",
@@ -35,7 +35,7 @@
     "suggest": {
         "ext-openssl": "To check TLS, CA bundle and PKCS#12 keystore file inputs",
         "symfony/yaml": "To read YAML config files",
-        "devium/toml": "To read TOML config files"
+        "devium/toml": "To read TOML config files (^1.1)"
     },
     "autoload": {
         "psr-4": {
