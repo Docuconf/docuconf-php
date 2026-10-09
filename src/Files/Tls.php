@@ -136,17 +136,18 @@ final class Tls
         if ($details === false) {
             return null;
         }
+        // Look for the Ed25519 OID (1.3.101.112) in the SubjectPublicKeyInfo
+        // first: PHP has no key type constant for it before 8.4, and some
+        // older builds report an Ed25519 key with the EC type.
+        $der = base64_decode(preg_replace('/-----[^-]+-----|\s/', '', (string) $details['key']) ?? '', true);
+        if ($der !== false && str_contains(substr($der, 0, 16), "\x06\x03\x2b\x65\x70")) {
+            return 'Ed25519';
+        }
         if ($details['type'] === OPENSSL_KEYTYPE_RSA) {
             return 'RSA';
         }
         if ($details['type'] === OPENSSL_KEYTYPE_EC) {
             return 'ECDSA';
-        }
-        // PHP has no key type constant for Ed25519 before 8.4: look for its
-        // OID (1.3.101.112) in the SubjectPublicKeyInfo.
-        $der = base64_decode(preg_replace('/-----[^-]+-----|\s/', '', (string) $details['key']) ?? '', true);
-        if ($der !== false && str_contains(substr($der, 0, 16), "\x06\x03\x2b\x65\x70")) {
-            return 'Ed25519';
         }
         return null;
     }
