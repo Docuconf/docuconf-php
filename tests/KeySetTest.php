@@ -128,6 +128,29 @@ final class KeySetTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{string, string}> */
+    public static function emptyKeys(): iterable
+    {
+        yield 'old,' => [self::OLD . ',', 'key 2 is empty'];
+        yield ',new' => [',' . self::NEW, 'key 1 is empty'];
+        yield 'a,,b' => [self::OLD . ',,' . self::NEW, 'key 2 is empty'];
+    }
+
+    /** An empty key is named by its 1-based position, in declaration and contract-first mode alike. */
+    #[\PHPUnit\Framework\Attributes\DataProvider('emptyKeys')]
+    public function testEmptyKeyMessage(string $raw, string $message): void
+    {
+        $env = Env::declare('svc');
+        $env->ifPresent('WEBHOOK_KEYS')->isKeySet()->maxKeys(3)->describe('Keys that verify webhook signatures');
+        $contract = \Docuconf\Contract::fromJson(['apiVersion' => 'docuconf.dev/v1alpha1', 'kind' => 'ConfigContract', 'metadata' => ['name' => 'svc'],
+            'vars' => ['WEBHOOK_KEYS' => ['type' => 'keySet', 'secret' => true, 'maxKeys' => 3, 'description' => 'Keys that verify webhook signatures']]]);
+        foreach ([$env->check(['WEBHOOK_KEYS' => $raw]), $contract->check(['WEBHOOK_KEYS' => $raw])] as $result) {
+            self::assertCount(1, $result->violations);
+            self::assertSame('out_of_range', $result->violations[0]->code);
+            self::assertSame($message, $result->violations[0]->message);
+        }
+    }
+
     /** @return iterable<string, array{\Closure(\Docuconf\Declaration): mixed, string}> */
     public static function badDeclarations(): iterable
     {

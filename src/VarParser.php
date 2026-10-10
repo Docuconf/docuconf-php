@@ -347,7 +347,7 @@ final class VarParser
                     $len = mb_strlen($key, 'UTF-8');
                     $which = 'key ' . ($i + 1) . ' of ' . count($value);
                     if ($len === 0) {
-                        return ['out_of_range', "has an empty key ($which): a stray separator, or an unset item"];
+                        return ['out_of_range', 'key ' . ($i + 1) . ' is empty'];
                     }
                     if ($spec->keyMinLength !== null && $len < $spec->keyMinLength) {
                         return ['out_of_range', "has a key shorter than keyMinLength {$spec->keyMinLength} ($which, $len characters)"];
