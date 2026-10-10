@@ -164,6 +164,190 @@ final class FilesTest extends TestCase
         unlink((string) $log);
     }
 
+    /** Points a projected-volume style symlink at a new version of the file. */
+    private function swap(string $path, string $version, string $content): void
+    {
+        $dir = dirname($path);
+        $this->put("$dir/$version/" . basename($path), $content);
+        @unlink($this->root . $path);
+        symlink("{$this->root}$dir/$version/" . basename($path), $this->root . $path);
+    }
+
+    /** @return array{\Docuconf\Files\LoadedFile, string} the watched file and the error log it writes to */
+    private function watchedSettings(): array
+    {
+        $d = Env::declare('svc');
+        $d->configFile('settings', '/etc/svc/settings/settings.json')->required()->reload('watch')
+            ->schema(['type' => 'object', 'required' => ['port']])->describe('Service settings');
+        $this->swap('/etc/svc/settings/settings.json', '..v1', '{"port": 1}');
+        $file = $d->load($this->env())->file('settings');
+        self::assertNotNull($file);
+        $log = $this->root . '/error.log';
+        return [$file, $log];
+    }
+
+    public function testOnChangeRunsOnAnAcceptedChangeOnly(): void
+    {
+        [$file, $log] = $this->watchedSettings();
+        $seen = [];
+        $file->onChange(function ($f) use (&$seen) {
+            $seen[] = $f->value;
+        });
+        $previous = ini_set('error_log', $log);
+        try {
+            $this->swap('/etc/svc/settings/settings.json', '..v2', '{"other": 2}');
+            self::assertFalse($file->refresh());
+            self::assertSame([], $seen, 'not called for a rejected change');
+
+            $this->swap('/etc/svc/settings/settings.json', '..v3', '{"port": 3}');
+            self::assertTrue($file->refresh());
+            self::assertSame([['port' => 3]], $seen, 'called with the new value');
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+    }
+
+    public function testThrowingOnChangeCallbackDoesNotStopTheReload(): void
+    {
+        [$file, $log] = $this->watchedSettings();
+        $calls = [];
+        $file->onChange(function () use (&$calls) {
+            $calls[] = 'first';
+            throw new \RuntimeException('secret-looking detail {"port": 2}');
+        });
+        $unsubscribe = $file->onChange(function () use (&$calls) {
+            $calls[] = 'removed';
+        });
+        $file->onChange(function () use (&$calls) {
+            $calls[] = 'last';
+        });
+        $unsubscribe();
+        $previous = ini_set('error_log', $log);
+        try {
+            $this->swap('/etc/svc/settings/settings.json', '..v2', '{"port": 2}');
+            self::assertTrue($file->refresh());
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        self::assertSame(['first', 'last'], $calls);
+        self::assertSame(['port' => 2], $file->value);
+        self::assertSame(2, $file->status()->generation);
+        $logged = (string) file_get_contents($log);
+        self::assertStringContainsString('an on-change callback for file settings threw RuntimeException', $logged);
+        self::assertStringNotContainsString('secret-looking', $logged);
+    }
+
+    public function testReloadStatus(): void
+    {
+        [$file, $log] = $this->watchedSettings();
+        $status = $file->status();
+        self::assertSame(1, $status->generation);
+        self::assertNull($status->lastReload);
+        self::assertNull($status->lastRejected);
+
+        $previous = ini_set('error_log', $log);
+        try {
+            $before = new \DateTimeImmutable();
+            $this->swap('/etc/svc/settings/settings.json', '..v2', '{"other": 2}');
+            self::assertFalse($file->refresh());
+            $status = $file->status();
+            self::assertSame(1, $status->generation);
+            self::assertNull($status->lastReload);
+            self::assertNotNull($status->lastRejected);
+            self::assertSame('settings', $status->lastRejected->name);
+            self::assertSame(['schema_mismatch'], $status->lastRejected->codes);
+            self::assertGreaterThanOrEqual($before->getTimestamp(), $status->lastRejected->at->getTimestamp());
+
+            $this->swap('/etc/svc/settings/settings.json', '..v3', '{"port": 3}');
+            self::assertTrue($file->refresh());
+            $status = $file->status();
+            self::assertSame(2, $status->generation);
+            self::assertNotNull($status->lastReload);
+            self::assertNull($status->lastRejected, 'cleared by an accepted change');
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+    }
+
+    public function testOnChangeNeedsWatch(): void
+    {
+        $d = Env::declare('svc');
+        $d->text('licence', '/etc/svc/licence/key')->required()->describe('Licence key');
+        $this->put('/etc/svc/licence/key', 'one');
+        $file = $d->load($this->env())->file('licence');
+        self::assertNotNull($file);
+        self::assertSame(1, $file->status()->generation);
+        $this->expectException(\LogicException::class);
+        $file->onChange(fn () => null);
+    }
+
+    public function testKeystoreReloadUsesTheBootPassword(): void
+    {
+        $d = Env::declare('svc');
+        $d->ifPresent('KEYSTORE_PASSWORD')->secret()->describe('Keystore password');
+        $d->keystore('partner', '/etc/svc/partner/store.pkcs12', 'pkcs12')->required()->passwordVar('KEYSTORE_PASSWORD')
+            ->reload('watch')->describe('Partner keystore');
+        $this->swap('/etc/svc/partner/store.pkcs12', '..v1', Certs::pkcs12('changeit'));
+        $file = $d->load($this->env(['KEYSTORE_PASSWORD' => 'changeit']))->file('partner');
+        self::assertNotNull($file);
+        $changes = 0;
+        $file->onChange(function () use (&$changes) {
+            $changes++;
+        });
+        $log = $this->root . '/error.log';
+        $previous = ini_set('error_log', $log);
+        $env = getenv('KEYSTORE_PASSWORD');
+        try {
+            // A store with another password is rejected, even if the process
+            // environment now says that password: the boot one is used.
+            putenv('KEYSTORE_PASSWORD=rotated');
+            $_ENV['KEYSTORE_PASSWORD'] = 'rotated';
+            $this->swap('/etc/svc/partner/store.pkcs12', '..v2', Certs::pkcs12('rotated'));
+            self::assertFalse($file->refresh());
+            self::assertSame(['keystore_unreadable'], $file->status()->lastRejected?->codes);
+            self::assertSame(1, $file->status()->generation);
+            self::assertSame(0, $changes);
+            self::assertStringNotContainsString('rotated', (string) file_get_contents($log));
+
+            $this->swap('/etc/svc/partner/store.pkcs12', '..v3', Certs::pkcs12('changeit'));
+            self::assertTrue($file->refresh());
+            self::assertSame(2, $file->status()->generation);
+            self::assertSame(1, $changes);
+        } finally {
+            ini_set('error_log', (string) $previous);
+            putenv($env === false ? 'KEYSTORE_PASSWORD' : "KEYSTORE_PASSWORD=$env");
+            unset($_ENV['KEYSTORE_PASSWORD']);
+        }
+    }
+
+    public function testContractFirstModeReloadsWatchedFiles(): void
+    {
+        $contract = \Docuconf\Contract::fromJson(['apiVersion' => 'docuconf.dev/v1alpha1', 'kind' => 'ConfigContract', 'metadata' => ['name' => 'svc'],
+            'vars' => new \stdClass(),
+            'files' => ['licence' => ['type' => 'text', 'path' => '/etc/svc/licence/key', 'required' => true, 'reload' => 'watch',
+                'pattern' => '^[a-z]+$', 'description' => 'Licence key']]]);
+        $this->swap('/etc/svc/licence/key', '..v1', 'one');
+        $file = $contract->load($this->env())->file('licence');
+        self::assertNotNull($file);
+        self::assertTrue($file->watched());
+        $seen = [];
+        $file->onChange(function ($f) use (&$seen) {
+            $seen[] = $f->content;
+        });
+        $previous = ini_set('error_log', $this->root . '/error.log');
+        try {
+            $this->swap('/etc/svc/licence/key', '..v2', 'TWO');
+            self::assertFalse($file->refresh());
+            self::assertSame(['pattern_mismatch'], $file->status()->lastRejected?->codes);
+            $this->swap('/etc/svc/licence/key', '..v3', 'three');
+            self::assertTrue($file->refresh());
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+        self::assertSame(['three'], $seen);
+        self::assertSame(2, $file->status()->generation);
+    }
+
     public function testRestartIsNotWatched(): void
     {
         $d = Env::declare('svc');
