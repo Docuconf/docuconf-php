@@ -63,7 +63,7 @@ if WEBHOOK_KEYS="$old_key," "$php" bin/console docuconf:check >"$tmp/bad.txt" 2>
   echo "docuconf:check passed with an empty webhook key" >&2; exit 1
 fi
 expected='docuconf: 1 configuration problem:
-  - WEBHOOK_KEYS [out_of_range]: has an empty key (key 2 of 2): a stray separator, or an unset item'
+  - WEBHOOK_KEYS [out_of_range]: key 2 is empty'
 if [ "$(cat "$tmp/bad.txt")" != "$expected" ] || grep -q webhook-key "$tmp/bad.txt"; then
   echo "unexpected output for an empty webhook key:" >&2; diff <(echo "$expected") "$tmp/bad.txt" >&2; exit 1
 fi

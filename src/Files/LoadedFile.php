@@ -21,6 +21,11 @@ namespace Docuconf\Files;
  * fails its checks is not used: the previous content stays current, and
  * the failure is logged with error_log(), never the content.
  *
+ * onChange() registers a callback that runs after a change passes its
+ * checks and replaces the previous content, on the access (or refresh())
+ * that sees it; status() says how many reloads were accepted and the last
+ * one rejected.
+ *
  * @property-read ?string $content the file's text, for config and text files
  * @property-read mixed $value the bound config object or data, or the text
  */
@@ -36,6 +41,12 @@ final class LoadedFile
     /** @var list<?array<int|string, int>> */
     private array $stamps = [];
     private float $next = 0.0;
+    /** @var array<int, \Closure(LoadedFile): mixed> */
+    private array $listeners = [];
+    private int $listenerId = 0;
+    private int $generation = 1;
+    private ?\DateTimeImmutable $lastReload = null;
+    private ?RejectedReload $lastRejected = null;
 
     public function __construct(
         public readonly string $name,
@@ -72,7 +83,8 @@ final class LoadedFile
     /**
      * For a watched input, looks at its files now and re-reads them if they
      * changed. Returns whether the content changed; false for an input
-     * that is not watched, or a change that failed its checks.
+     * that is not watched, or a change that failed its checks. On-change
+     * callbacks run before it returns.
      */
     public function refresh(): bool
     {
@@ -87,12 +99,62 @@ final class LoadedFile
         $this->stamps = $stamps;
         [$fresh, $violations] = ($this->reload)();
         if ($fresh === null || $violations !== []) {
-            $why = implode('; ', array_map(fn ($v) => "[{$v->code}] {$v->message}", $violations));
+            $codes = $violations === [] ? ['file_missing'] : array_values(array_unique(array_map(fn ($v) => $v->code, $violations)));
+            $this->lastRejected = new RejectedReload(new \DateTimeImmutable(), $this->name, $codes);
+            $why = $violations === [] ? '[file_missing] it is gone'
+                : implode('; ', array_map(fn ($v) => "[{$v->code}] {$v->message}", $violations));
             error_log("docuconf: file {$this->name} changed, but the new content fails its checks, so the previous content stays in use: $why");
             return false;
         }
         \Docuconf\Vault::put($this, ['content' => $fresh->content, 'value' => $fresh->value]);
+        $this->generation++;
+        $this->lastReload = new \DateTimeImmutable();
+        $this->lastRejected = null;
+        foreach ($this->listeners as $listener) {
+            try {
+                $listener($this);
+            } catch (\Throwable $e) {
+                // The input's name and the error's type, never its message: it may quote the content.
+                error_log("docuconf: an on-change callback for file {$this->name} threw " . get_class($e));
+            }
+        }
         return true;
+    }
+
+    /**
+     * Calls $listener with this file after a change passes its checks and
+     * replaces the previous content; read the new content from it, or open
+     * the files at its path again (a TLS key pair, a keystore). Never
+     * called for a change that fails its checks. Callbacks run in the
+     * order they were added, on the read of `content` or `value` (or the
+     * refresh()) that sees the change; one that throws is logged by the
+     * input's name and the error's type, and the others still run.
+     *
+     * Returns a closure that removes the callback.
+     *
+     * @param callable(LoadedFile): mixed $listener
+     * @return \Closure(): void
+     */
+    public function onChange(callable $listener): \Closure
+    {
+        if ($this->reload === null) {
+            throw new \LogicException("docuconf: file {$this->name} is not declared reload: watch, so it never changes; declare ->reload('watch') to use onChange()");
+        }
+        $id = $this->listenerId++;
+        $this->listeners[$id] = \Closure::fromCallable($listener);
+        return function () use ($id): void {
+            unset($this->listeners[$id]);
+        };
+    }
+
+    /**
+     * The reload status: the generation (1 after boot, plus one per
+     * accepted reload), when the last reload was accepted, and the last
+     * rejected change (cleared when a later one is accepted).
+     */
+    public function status(): ReloadStatus
+    {
+        return new ReloadStatus($this->generation, $this->lastReload, $this->lastRejected);
     }
 
     public function __get(string $property): mixed

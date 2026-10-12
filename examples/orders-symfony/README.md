@@ -78,7 +78,7 @@ A trailing comma or a truncated key is refused at boot, without printing the key
 ```console
 $ WEBHOOK_KEYS=old-webhook-key-0123456789abcdef0123, bin/console docuconf:check
 docuconf: 1 configuration problem:
-  - WEBHOOK_KEYS [out_of_range]: has an empty key (key 2 of 2): a stray separator, or an unset item
+  - WEBHOOK_KEYS [out_of_range]: key 2 is empty
 ```
 
 [`smoke.sh`](smoke.sh) posts webhooks signed with both keys, and

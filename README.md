@@ -379,7 +379,8 @@ counts. A value out of bounds is `out_of_range`, and a secret is reported by its
 **Key sets.** A `keySet` (SPEC §4.3) holds secret keys that are all valid at once, so a key can be rotated with no
 downtime ([SPEC section 6.1](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md#61-rotation)): one Secret
 key holds `old,new` during the overlap. It is always secret, holds 1 to 2 keys unless `minKeys()` and `maxKeys()`
-say otherwise, and an empty key (a stray separator) is `out_of_range` whatever `keyMinLength()` says. Its value is a
+say otherwise, and an empty key (a stray separator) is `out_of_range` whatever `keyMinLength()` says, reported by its
+1-based position: `old,` is `key 2 is empty`, `,new` is `key 1 is empty`. Its value is a
 `Docuconf\KeySet`: the keys in order, `contains($candidate)` in constant time, and `verify($check)`, which runs your
 check (such as an HMAC comparison) with every key without stopping at the first match:
 
@@ -513,6 +514,51 @@ ConfigMap): reading `$file->value` or `$file->content` looks at its files at mos
 file. A change that fails its checks is not used: the previous content stays, and the failure goes to the error log.
 A TLS key pair, CA bundle, keystore or binary file is opened by your code from its path, so it sees a new file on its
 own; watching it re-runs the checks.
+
+A reload checks a keystore with the password read at boot: a running process's environment does not change. A new
+keystore under a new password fails as `keystore_unreadable` and the previous one stays in use, so rotating a
+keystore's password needs a rollout.
+
+PHP has no background thread for this: a change is seen on the read of `value` or `content` that comes after it (at
+most once a second), or on `refresh()`. Under PHP-FPM each request boots again, so watching matters for long-running
+workers (Laravel Octane, RoadRunner, Swoole, a queue worker or a ReactPHP loop); call `$file->refresh()` from a timer
+or at the start of each job if a hook must run without a read.
+
+**Using a watched value.** Read the current value on every use, never a copy taken at boot: a TLS context or HTTP
+client built once keeps the old certificate until it expires. Read `$file->value` where you need it, or rebuild what
+you derived from the file in an `onChange()` hook. It runs after a change passes its checks and replaces the previous
+content, with the `LoadedFile`, never for a rejected change; several hooks may be added, one that throws is logged by
+the input's name and the error's type and the others still run, and `onChange()` returns a closure that removes the
+hook:
+
+```php
+<?php
+// A TLS server (a stream server, or a ReactPHP loop on one): PHP opens local_cert and local_pk
+// at every handshake, so pointing the context at the paths, not at copies, is the per-use pattern.
+$tls = $config->file('serving-tls');
+$server = stream_socket_server('tls://0.0.0.0:8443', $errno, $errstr, STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+    stream_context_create(['ssl' => ['local_cert' => $tls->file('tls.crt'), 'local_pk' => $tls->file('tls.key')]]));
+$tls->onChange(fn (Docuconf\Files\LoadedFile $f) => error_log("serving-tls renewed, generation {$f->status()->generation}"));
+
+// An HTTP client with a client certificate: build a new one when the certificate changes.
+$clientTls = $config->file('partner-tls');
+$client = new GuzzleHttp\Client(['cert' => $clientTls->file('tls.crt'), 'ssl_key' => $clientTls->file('tls.key')]);
+$stop = $clientTls->onChange(function (Docuconf\Files\LoadedFile $f) use (&$client): void {
+    $client = new GuzzleHttp\Client(['cert' => $f->file('tls.crt'), 'ssl_key' => $f->file('tls.key')]);
+});
+// $stop() removes the hook.
+```
+
+**Reload status.** `$file->status()` is a `Docuconf\Files\ReloadStatus`, for a health check or a metric:
+`generation` (1 after boot, plus one per accepted reload), `lastReload` (a `DateTimeImmutable`, null until the first
+accepted reload) and `lastRejected` (null, or a `Docuconf\Files\RejectedReload` with `at`, `name` and the violation
+`codes`, never the content; cleared when a later change is accepted).
+
+```php
+<?php
+$status = $config->file('routes')->status();
+$healthy = $status->lastRejected === null;   // or export $status->generation as a gauge
+```
 
 **Config types.** A class used with `isJson()` or `schema()` is read by reflection: constructor parameters (or
 public properties) typed `int`, `float`, `string`, `bool`, nullable types, backed enums, `Docuconf\Duration`,

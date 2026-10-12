@@ -29,7 +29,9 @@ final class FileChecker
     {
         [$loaded, $violations] = self::checkOnce($f, $env, $now);
         if ($loaded !== null && $f->reload === 'watch') {
-            // SPEC §11.2 item 8: re-read the input when it changes.
+            // SPEC §11.2 item 8: re-read the input when it changes. A reload
+            // uses $env as read at boot, so a keystore's password is the boot
+            // one: the environment of a running process does not change.
             $paths = $f->type === 'tls'
                 ? array_map(fn (string $n) => "{$loaded->path}/$n", $f->requireCA ? ['tls.crt', 'tls.key', 'ca.crt'] : ['tls.crt', 'tls.key'])
                 : [$loaded->path];
