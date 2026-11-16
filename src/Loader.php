@@ -6,6 +6,7 @@ namespace Docuconf;
 
 use Docuconf\Files\FileChecker;
 use Docuconf\Spec\ContractSpec;
+use Docuconf\Spec\RequiredIf;
 
 /**
  * Loads a contract from an environment: the layers under it (Layers), every
@@ -26,7 +27,17 @@ final class Loader
         $present = [];
         // Profiles and overlays (contract-first mode) sit under the environment.
         [$layers, $violations, $warnings] = Layers::load($spec, $env);
+        // Roles (SPEC §4.9): an input only other roles use is optional here.
+        // With no role, or one the contract does not declare, every
+        // role-specific input is optional, so the role is the one problem.
+        $role = $env[ContractSpec::ROLE_VAR] ?? null;
+        $role = $spec->roles !== null && in_array($role, $spec->roles, true) ? $role : null;
+        $inRole = fn (?array $used): bool => $used === null || $role !== null && in_array($role, $used, true);
         foreach ($spec->vars as $name => $var) {
+            if ($var->required && !$inRole($var->roles)) {
+                $var = clone $var;
+                $var->required = false;
+            }
             $layer = $layers[$name] ?? null;
             [$isSet, $value, $violation, $source] = VarParser::read($var, $env, $layer);
             if ($violation !== null) {
@@ -44,9 +55,33 @@ final class Loader
                     . (isset($var->deprecated['replacedBy']) ? " (replaced by {$var->deprecated['replacedBy']})" : '');
             }
         }
+        // Conditional requirements (SPEC §4.2.1), on the condition variables'
+        // loaded values: the environment, an overlay, the selected profile or
+        // the default. A condition variable with a violation has no value, so
+        // it makes nothing required.
+        $requiredWhen = fn (?RequiredIf $cond, ?array $used): ?RequiredIf =>
+            $cond !== null && $inRole($used) && $cond->holdsFor($values[$cond->var] ?? null) ? $cond : null;
+        $reported = array_flip(array_map(fn (Violation $v) => $v->input, $violations));
+        foreach ($spec->vars as $name => $var) {
+            if ($values[$name] === null && !isset($reported[$name]) && ($when = $requiredWhen($var->requiredIf, $var->roles)) !== null) {
+                $violations[] = new Violation($name, 'missing_required', "is required when $when");
+            }
+        }
         $files = [];
         foreach ($spec->files as $name => $file) {
+            $when = $requiredWhen($file->requiredIf, $file->roles);
+            $required = $inRole($file->roles) && ($file->required || $when !== null);
+            if ($required !== $file->required) {
+                $file = clone $file;
+                $file->required = $required;
+            }
             [$loaded, $fileViolations] = FileChecker::check($file, $env, $now);
+            if ($when !== null) {
+                $fileViolations = array_map(
+                    fn (Violation $v) => $v->code === 'file_missing' ? new Violation($v->input, $v->code, "{$v->message}, and is required when $when") : $v,
+                    $fileViolations,
+                );
+            }
             array_push($violations, ...$fileViolations);
             $files[$name] = $loaded;
             if ($loaded !== null && $file->deprecated !== null) {

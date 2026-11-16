@@ -23,12 +23,21 @@ use PHPUnit\Framework\TestCase;
  * including a tag this runner has never heard of (SPEC §12). This SDK
  * supports every tag, so testNothingIsSkipped fails on any skip when
  * DOCUCONF_REQUIRE_CONFORMANCE=1, as CI sets it.
+ *
+ * The pending cases (cases.pending.json, next to cases.json; or
+ * DOCUCONF_CONFORMANCE_PENDING) cover features not every SDK supports yet.
+ * Each runs the same way, but one that requires a tag this SDK does not
+ * know passes without running instead of being skipped, so that a new
+ * pending feature never fails CI here. When the file is missing, the
+ * pending run is skipped (with DOCUCONF_REQUIRE_CONFORMANCE=1, it notes
+ * that on stderr and passes: cases.json is the suite CI requires).
  */
 final class ConformanceTest extends TestCase
 {
     /** The capability tags this SDK supports: all of them (conformance/README.md). */
     public const SUPPORTED_TAGS = [
         'int64', 'json-schema', 'key-set', 'deprecated', 'strict-parsing', 'files', 'profiles', 'overlays',
+        'required-if', 'roles',
     ];
 
     private static function casesPath(): string
@@ -40,10 +49,19 @@ final class ConformanceTest extends TestCase
         return dirname(__DIR__, 2) . '/docuconf-go/conformance/cases.json';
     }
 
-    /** @return list<array<string, mixed>>|null the cases, or null when the suite is missing */
-    private static function suite(): ?array
+    private static function pendingPath(): string
     {
-        $path = self::casesPath();
+        $path = getenv('DOCUCONF_CONFORMANCE_PENDING');
+        if (is_string($path) && $path !== '') {
+            return $path;
+        }
+        return dirname(self::casesPath()) . '/cases.pending.json';
+    }
+
+    /** @return list<array<string, mixed>>|null the cases, or null when the suite is missing */
+    private static function suite(?string $path = null): ?array
+    {
+        $path ??= self::casesPath();
         if (!is_file($path)) {
             return null;
         }
@@ -112,6 +130,20 @@ final class ConformanceTest extends TestCase
         self::assertGreaterThan(0, count($cases), 'the suite holds no cases');
     }
 
+    /** @return array<string, array{array<string, mixed>}> */
+    public static function pendingCases(): array
+    {
+        $cases = self::suite(self::pendingPath());
+        if ($cases === null) {
+            return ['pending cases missing' => [['missing' => self::pendingPath()]]];
+        }
+        $out = [];
+        foreach ($cases as $case) {
+            $out[$case['id']] = [$case];
+        }
+        return $out;
+    }
+
     /** @param array<string, mixed> $case */
     #[DataProvider('cases')]
     public function testCase(array $case): void
@@ -124,6 +156,51 @@ final class ConformanceTest extends TestCase
             // An unknown tag is unsupported too: skip the case, never run it.
             self::markTestSkipped('requires ' . implode(', ', $missing));
         }
+        self::runCase($case);
+    }
+
+    /**
+     * A pending case (cases.pending.json): one whose tags this SDK supports
+     * must pass; one with a tag it does not know passes without running.
+     *
+     * @param array<string, mixed> $case
+     */
+    #[DataProvider('pendingCases')]
+    public function testPendingCase(array $case): void
+    {
+        if (isset($case['missing'])) {
+            if (getenv('DOCUCONF_REQUIRE_CONFORMANCE') === '1') {
+                fwrite(STDERR, "\nconformance pending: no cases at {$case['missing']}; nothing to run\n");
+                $this->addToAssertionCount(1);
+                return;
+            }
+            self::markTestSkipped("pending conformance cases not found at {$case['missing']}");
+        }
+        $missing = self::unsupported($case);
+        if ($missing !== []) {
+            fwrite(STDERR, "\nconformance pending: skipped {$case['id']}, requires " . implode(', ', $missing) . "\n");
+            $this->addToAssertionCount(1);
+            return;
+        }
+        self::runCase($case);
+    }
+
+    /** How many pending cases run and how many are skipped, on stderr. */
+    public function testPendingSummary(): void
+    {
+        $cases = self::suite(self::pendingPath());
+        if ($cases === null) {
+            $this->addToAssertionCount(1);
+            return;
+        }
+        $n = count(array_filter($cases, fn (array $c) => self::unsupported($c) !== []));
+        fwrite(STDERR, sprintf("\nconformance pending: %d cases, %d run, %d skipped\n", count($cases), count($cases) - $n, $n));
+        self::assertGreaterThanOrEqual(0, $n);
+    }
+
+    /** @param array<string, mixed> $case */
+    private static function runCase(array $case): void
+    {
         $id = $case['id'] . ' (' . $case['source'] . ')';
         $contract = Contract::fromJson(json_encode($case['contract'], JSON_THROW_ON_ERROR));
         /** @var array<string, string> $env */

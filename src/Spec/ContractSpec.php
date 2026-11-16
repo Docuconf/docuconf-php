@@ -18,6 +18,13 @@ final class ContractSpec
     public ?ProfilesSpec $profiles = null;
     /** @var array<string, OverlaySpec> config-file overlays (SPEC §4.7); contract-first mode only */
     public array $overlays = [];
+    /** @var list<string> the well-known fragments it includes (SPEC §4.8), name@major; their variables are in $vars */
+    public array $includes = [];
+    /** @var list<string>|null the roles the image runs as (SPEC §4.9); contract-first mode only */
+    public ?array $roles = null;
+
+    /** The variable that names the workload's role (SPEC §4.9). */
+    public const ROLE_VAR = 'DOCUCONF_ROLE';
 
     public function __construct(public string $name, public ?string $appVersion = null)
     {

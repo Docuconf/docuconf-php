@@ -7,6 +7,7 @@ namespace Docuconf\Export;
 use Docuconf\Duration;
 use Docuconf\Spec\ContractSpec;
 use Docuconf\Spec\FileSpec;
+use Docuconf\Spec\RequiredIf;
 use Docuconf\Spec\VarSpec;
 use Docuconf\Version;
 
@@ -45,8 +46,14 @@ final class Exporter
             'apiVersion' => 'docuconf.dev/v1alpha1',
             'kind' => 'ConfigContract',
             'metadata' => $metadata,
-            'vars' => [],
         ];
+        if ($contract->includes !== []) {
+            $out['includes'] = $contract->includes;
+        }
+        if ($contract->roles !== null) {
+            $out['roles'] = $contract->roles;
+        }
+        $out['vars'] = [];
         foreach ($contract->sortedVars() as $name => $var) {
             $out['vars'][$name] = self::var($var);
         }
@@ -91,6 +98,7 @@ final class Exporter
         $o = ['type' => $v->type, 'description' => $v->description];
         self::put($o, 'details', $v->details);
         self::common($o, $v->required, $v->secret, $v->group, $v->deprecated);
+        self::scope($o, $v->requiredIf, $v->roles);
         if ($v->examples !== null) {
             $o['examples'] = $v->examples;
         }
@@ -163,6 +171,7 @@ final class Exporter
         $o['description'] = $f->description;
         self::put($o, 'details', $f->details);
         self::common($o, $f->required, $f->secret, $f->group, $f->deprecated);
+        self::scope($o, $f->requiredIf, $f->roles);
         $o['path'] = $f->path;
         self::put($o, 'pathEnv', $f->pathEnv);
         if ($f->reload !== 'restart') {
@@ -212,6 +221,20 @@ final class Exporter
         }
         self::put($o, 'group', $group);
         self::put($o, 'deprecated', $deprecated);
+    }
+
+    /**
+     * An input's requiredIf (SPEC §4.2.1) and roles (SPEC §4.9).
+     *
+     * @param array<string, mixed> $o
+     * @param list<string>|null $roles
+     */
+    private static function scope(array &$o, ?RequiredIf $requiredIf, ?array $roles): void
+    {
+        if ($requiredIf !== null) {
+            $o['requiredIf'] = [$requiredIf->var => $requiredIf->value];
+        }
+        self::put($o, 'roles', $roles);
     }
 
     /** @param array<string, mixed> $o */
