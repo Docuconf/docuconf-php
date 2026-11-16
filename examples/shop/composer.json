@@ -1,0 +1,21 @@
+{
+    "name": "docuconf/example-shop",
+    "description": "The shop example: one service with web and worker roles, configured contract-first with docuconf.",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "docuconf/docuconf": "@dev"
+    },
+    "repositories": [
+        {"type": "path", "url": "../..", "options": {"symlink": true}}
+    ],
+    "autoload": {
+        "psr-4": {"App\\": "app/"}
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -134,7 +134,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [orders, orders-symfony]
+        example: [orders, orders-symfony, shop]
     steps:
       - uses: actions/checkout@v4
       - name: Pick the docuconf-go ref
@@ -168,12 +168,16 @@ jobs:
         working-directory: examples/${{ matrix.example }}
         run: composer update --no-interaction --no-progress --prefer-dist
       # contract.cue is generated; it must match what the app exports today,
-      # except metadata.generator.version, which release PRs bump.
+      # except metadata.generator.version, which release PRs bump. The shop
+      # example is contract-first: its contract.cue is generated from the
+      # contract.json it loads, by contract-cue.sh.
       - name: Contract is up to date
         working-directory: examples/${{ matrix.example }}
         run: |
           if [ -f artisan ]; then
             php artisan docuconf:export --output="$RUNNER_TEMP/contract.cue"
+          elif [ -f contract-cue.sh ]; then
+            ./contract-cue.sh > "$RUNNER_TEMP/contract.cue"
           else
             bin/console docuconf:export --output="$RUNNER_TEMP/contract.cue"
           fi

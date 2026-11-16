@@ -11,7 +11,8 @@ Documentation: [docuconf.dev](https://docuconf.dev) · [Laravel guide](https://d
 
 This is the PHP SDK of [docuconf](https://github.com/docuconf/docuconf-go). The specification is
 [`spec/SPEC.md`](https://github.com/docuconf/docuconf-go/blob/main/spec/SPEC.md) in docuconf-go. Examples:
-[`examples/orders`](examples/orders) (Laravel) and [`examples/orders-symfony`](examples/orders-symfony) (Symfony).
+[`examples/orders`](examples/orders) (Laravel), [`examples/orders-symfony`](examples/orders-symfony) (Symfony) and
+[`examples/shop`](examples/shop) (plain PHP, contract-first: roles, `requiredIf` and the `otel@1` fragment).
 
 ## Install
 
@@ -623,7 +624,7 @@ Contract-first mode also reads the rest of a contract's scope:
 - **`includes`** (SPEC §4.8): the well-known fragments (`otel@1`), whose variables the contract carries inline in
   `vars`. `Contract::includes()` lists them.
 
-The declaration API has none of these three yet.
+The declaration API has none of these three yet. [`examples/shop`](examples/shop) loads a contract with all three.
 
 ### Conformance
 
