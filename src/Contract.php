@@ -10,6 +10,7 @@ use Docuconf\Spec\ContractSpec;
 use Docuconf\Spec\FileSpec;
 use Docuconf\Spec\OverlaySpec;
 use Docuconf\Spec\ProfilesSpec;
+use Docuconf\Spec\RequiredIf;
 use Docuconf\Spec\SpecValidator;
 use Docuconf\Spec\VarSpec;
 
@@ -105,6 +106,15 @@ final class Contract
                 $problems[] = "overlay $name: " . $e->getMessage();
             }
         }
+        $spec->includes = self::readIncludes($contract['includes'] ?? null, $problems);
+        if (array_key_exists('roles', $contract)) {
+            try {
+                $spec->roles = self::readRoles($contract['roles']);
+            } catch (\InvalidArgumentException $e) {
+                $problems[] = $e->getMessage();
+            }
+        }
+        array_push($problems, ...self::roleProblems($spec), ...self::conditionProblems($spec));
         $problems = [...$problems, ...SpecValidator::problems($spec)];
         if ($problems !== []) {
             throw new DeclarationError($problems);
@@ -159,11 +169,33 @@ final class Contract
         return Exporter::toCue($this->spec, $package);
     }
 
-    private const TOP_KEYS = ['apiVersion', 'kind', 'metadata', 'vars', 'files', 'profiles', 'overlays'];
+    /** @return list<string> the well-known fragments the contract includes (SPEC §4.8), such as otel@1 */
+    public function includes(): array
+    {
+        return $this->spec->includes;
+    }
+
+    /** @return list<string> the contract's roles (SPEC §4.9); empty when it has none */
+    public function roles(): array
+    {
+        return $this->spec->roles ?? [];
+    }
+
+    private const TOP_KEYS = ['apiVersion', 'kind', 'metadata', 'includes', 'roles', 'vars', 'files', 'profiles', 'overlays'];
+
+    private const ROLE_NAME = '/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/D';
+
+    private const FRAGMENT_NAME = '/^[a-z][a-z0-9-]*@[1-9][0-9]*$/D';
+
+    /** The types a requiredIf condition variable can have: they compare as written (SPEC §4.2.1). */
+    private const CONDITION_TYPES = ['string', 'int', 'bool', 'enum'];
 
     private const OVERLAY_KEYS = ['name', 'description', 'format', 'path', 'keySeparator', 'reload'];
 
-    private const VAR_COMMON = ['name', 'type', 'description', 'details', 'required', 'secret', 'group', 'examples', 'configKey', 'deprecated', 'default'];
+    private const VAR_COMMON = [
+        'name', 'type', 'description', 'details', 'required', 'secret', 'group', 'examples', 'configKey', 'deprecated', 'default',
+        'requiredIf', 'roles',
+    ];
 
     /** Every key some variable type takes; SpecValidator reports one used on the wrong type. */
     private const VAR_KEYS = [
@@ -176,7 +208,7 @@ final class Contract
     private const FILE_KEYS = [
         'name', 'type', 'description', 'details', 'required', 'secret', 'path', 'pathEnv', 'reload', 'maxSize', 'group', 'deprecated',
         'format', 'schema', 'dnsNames', 'keyAlgorithms', 'minRemaining', 'requireCA', 'minCertificates', 'passwordVar',
-        'pattern', 'minLength', 'maxLength',
+        'pattern', 'minLength', 'maxLength', 'requiredIf', 'roles',
     ];
 
     /**
@@ -248,6 +280,8 @@ final class Contract
         $s->examples = self::strings($v, 'examples');
         $s->configKey = self::str($v, 'configKey');
         $s->deprecated = self::deprecated($v);
+        $s->requiredIf = self::requiredIf($v);
+        $s->roles = array_key_exists('roles', $v) ? self::readRoles($v['roles']) : null;
         $s->minLength = self::int($v, 'minLength');
         $s->maxLength = self::int($v, 'maxLength');
         $s->pattern = self::str($v, 'pattern');
@@ -401,6 +435,8 @@ final class Contract
         $s->maxSize = self::int($f, 'maxSize');
         $s->group = self::str($f, 'group');
         $s->deprecated = self::deprecated($f);
+        $s->requiredIf = self::requiredIf($f);
+        $s->roles = array_key_exists('roles', $f) ? self::readRoles($f['roles']) : null;
         $s->format = self::str($f, 'format');
         if (array_key_exists('schema', $f)) {
             $s->schema = match (true) {
@@ -420,6 +456,175 @@ final class Contract
         $s->minLength = self::int($f, 'minLength');
         $s->maxLength = self::int($f, 'maxLength');
         return $s;
+    }
+
+    /**
+     * The well-known fragments a contract includes (SPEC §4.8), `name@major`.
+     * Their variables are inline in `vars`, so this only reads the list.
+     *
+     * @param list<string> $problems
+     * @return list<string>
+     */
+    private static function readIncludes(mixed $node, array &$problems): array
+    {
+        if ($node === null) {
+            return [];
+        }
+        if (!is_array($node) || !array_is_list($node) || array_filter($node, fn ($x) => !is_string($x)) !== []) {
+            $problems[] = 'includes must be a list of fragment names, such as otel@1';
+            return [];
+        }
+        $out = [];
+        foreach ($node as $name) {
+            if (!preg_match(self::FRAGMENT_NAME, $name)) {
+                $problems[] = "includes: \"$name\" is not a fragment name, name@major";
+            } elseif (in_array($name, $out, true)) {
+                $problems[] = "includes: $name is listed twice";
+            } else {
+                $out[] = $name;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * A list of roles (SPEC §4.9): DNS labels, at least one, none listed twice.
+     *
+     * @return list<string>
+     */
+    private static function readRoles(mixed $node): array
+    {
+        if (!is_array($node) || !array_is_list($node) || $node === [] || array_filter($node, fn ($x) => !is_string($x)) !== []) {
+            throw new \InvalidArgumentException('roles must be a list of at least one role name');
+        }
+        $problems = [];
+        foreach ($node as $i => $role) {
+            if (!preg_match(self::ROLE_NAME, $role)) {
+                $problems[] = "role \"$role\" must be a DNS label";
+            } elseif (array_search($role, $node, true) < $i) {
+                $problems[] = "role $role is listed twice";
+            }
+        }
+        if ($problems !== []) {
+            throw new \InvalidArgumentException(implode('; ', $problems));
+        }
+        /** @var list<string> $node */
+        return $node;
+    }
+
+    /**
+     * `requiredIf: {VAR: value}` (SPEC §4.2.1): one variable and a string,
+     * integer or boolean value. An input with one is optional, with no
+     * default, and not deprecated.
+     *
+     * @param array<string, mixed> $o
+     */
+    private static function requiredIf(array $o): ?RequiredIf
+    {
+        if (!isset($o['requiredIf'])) {
+            return null;
+        }
+        $node = $o['requiredIf'];
+        if (!is_array($node) || count($node) !== 1 || array_is_list($node)) {
+            throw new \InvalidArgumentException('requiredIf must name one variable and its value: {VAR: value}');
+        }
+        $var = (string) array_key_first($node);
+        $value = $node[$var];
+        if (!preg_match(SpecValidator::ENV_NAME, $var) || !(is_string($value) || is_int($value) || is_bool($value))) {
+            throw new \InvalidArgumentException('requiredIf must name one variable and a string, integer or boolean value');
+        }
+        if (($o['required'] ?? false) === true || array_key_exists('default', $o)) {
+            throw new \InvalidArgumentException('an input with requiredIf cannot be required or have a default');
+        }
+        if (isset($o['deprecated'])) {
+            throw new \InvalidArgumentException('a conditionally required input cannot be deprecated: the platform could not stop setting it');
+        }
+        return new RequiredIf($var, $value);
+    }
+
+    /**
+     * The inputs' roles against the contract's (SPEC §4.9), and
+     * DOCUCONF_ROLE: a required enum whose values are exactly the roles,
+     * used by every role.
+     *
+     * @return list<string>
+     */
+    private static function roleProblems(ContractSpec $spec): array
+    {
+        $p = [];
+        $inputs = [];
+        foreach ($spec->sortedVars() as $name => $v) {
+            $inputs["$name: "] = $v->roles;
+        }
+        foreach ($spec->sortedFiles() as $name => $f) {
+            $inputs["file $name: "] = $f->roles;
+        }
+        foreach ($inputs as $what => $used) {
+            if ($used === null) {
+                continue;
+            }
+            if ($spec->roles === null) {
+                $p[] = "{$what}has roles, but the contract declares none";
+                continue;
+            }
+            foreach ($used as $r) {
+                if (!in_array($r, $spec->roles, true)) {
+                    $p[] = "{$what}role $r is not one of the contract's roles, " . implode(', ', $spec->roles);
+                }
+            }
+        }
+        if ($spec->roles === null) {
+            return $p;
+        }
+        $role = $spec->vars[ContractSpec::ROLE_VAR] ?? null;
+        if ($role === null || $role->type !== 'enum' || !$role->required || $role->roles !== null || $role->values !== $spec->roles) {
+            $p[] = ContractSpec::ROLE_VAR . ': a contract with roles declares it as a required enum whose values are the roles, '
+                . implode(', ', $spec->roles) . ', used by every role';
+        }
+        return $p;
+    }
+
+    /**
+     * Each input's requiredIf against the variables (SPEC §4.2.1): it names
+     * another declared variable, a plain (not secret) string, int, bool or
+     * enum one, and a value that variable can hold.
+     *
+     * @return list<string>
+     */
+    private static function conditionProblems(ContractSpec $spec): array
+    {
+        $p = [];
+        $inputs = [];
+        foreach ($spec->sortedVars() as $name => $v) {
+            $inputs["$name: "] = [$name, $v->requiredIf];
+        }
+        foreach ($spec->sortedFiles() as $name => $f) {
+            $inputs["file $name: "] = [$name, $f->requiredIf];
+        }
+        foreach ($inputs as $what => [$name, $cond]) {
+            if ($cond === null) {
+                continue;
+            }
+            $on = $spec->vars[$cond->var] ?? null;
+            if ($on === null || $cond->var === $name) {
+                $p[] = "{$what}requiredIf must name another declared variable, not \"{$cond->var}\"";
+                continue;
+            }
+            if ($on->secret || !in_array($on->type, self::CONDITION_TYPES, true)) {
+                $p[] = "{$what}requiredIf names {$on->name}, which is not a plain string, int, bool or enum variable";
+                continue;
+            }
+            $sameType = match ($on->type) {
+                'int' => is_int($cond->value),
+                'bool' => is_bool($cond->value),
+                default => is_string($cond->value),
+            };
+            $problem = $sameType ? VarParser::check($on, $cond->value) : null;
+            if (!$sameType || $problem !== null) {
+                $p[] = "{$what}requiredIf: $cond is not a value {$on->name} can have" . ($problem === null ? '' : ": {$problem[1]}");
+            }
+        }
+        return $p;
     }
 
     /**

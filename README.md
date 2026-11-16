@@ -608,6 +608,23 @@ read at their `configKey`, converted to the strings they stand for and checked l
 overlay is `invalid_type`. Overlays are read once, so `reload: watch` on an overlay is rejected. The declaration API
 has no profiles or overlays: Laravel and Symfony layer their own config files.
 
+Contract-first mode also reads the rest of a contract's scope:
+
+- **`requiredIf`** (SPEC §4.2.1), on a variable or a file input: `requiredIf: {TLS_ENABLED: true}` makes the input
+  required while the condition variable's loaded value (the environment, an overlay, the selected profile or its
+  default) is that value. The condition names another declared string, int, bool or enum variable that is not
+  secret, and a value it can hold; the input is not required, has no default and is not deprecated. A missing
+  variable is `missing_required` (`TLS_CLIENT_CA_SUBJECT: is required when TLS_ENABLED is true`; a string value is
+  quoted, `LOG_FORMAT is "json"`), a missing file `file_missing`. A condition variable with its own violation makes
+  nothing required.
+- **`roles`** (SPEC §4.9): the contract's roles and each input's. `DOCUCONF_ROLE` must be a required enum whose
+  values are the roles. At load, an input whose roles do not include `DOCUCONF_ROLE` is optional; without a valid
+  role, every role-specific input is, so the role is the one problem reported. `Contract::roles()` lists them.
+- **`includes`** (SPEC §4.8): the well-known fragments (`otel@1`), whose variables the contract carries inline in
+  `vars`. `Contract::includes()` lists them.
+
+The declaration API has none of these three yet.
+
 ### Conformance
 
 `tests/ConformanceTest.php` runs docuconf-go's shared suite (`conformance/cases.json`, SPEC §12) through
@@ -620,10 +637,15 @@ $ DOCUCONF_CONFORMANCE=../docuconf-go/conformance/cases.json DOCUCONF_REQUIRE_CO
 Without `DOCUCONF_CONFORMANCE` it looks for `../docuconf-go/conformance/cases.json`, and skips when that is
 missing unless `DOCUCONF_REQUIRE_CONFORMANCE=1`. **No capability tags are skipped, and no case is:** the runner
 keeps the list of tags this SDK supports, which is all of them (`int64`, `json-schema`, `key-set`, `deprecated`,
-`strict-parsing`, `files`, `profiles` and `overlays`), skips a case only for a tag outside that list (such as one it
+`strict-parsing`, `files`, `profiles`, `overlays`, `required-if` and `roles`), skips a case only for a tag outside that list (such as one it
 has never heard of), and fails when `DOCUCONF_REQUIRE_CONFORMANCE=1` and any case would be skipped. PHP holds every
 64-bit integer (`int64`), json values are validated with opis/json-schema (`json-schema`), and PKCS#12 keystores
 (AES-256-CBC with a SHA-256 MAC) open with PHP's OpenSSL extension.
+
+It also runs `conformance/cases.pending.json`, next to `cases.json` (or `DOCUCONF_CONFORMANCE_PENDING`): cases of
+features not every SDK supports yet. A pending case with only tags this SDK supports must pass; one with a tag it
+does not know passes without running, never skipped, so a new pending feature does not fail `--fail-on-skipped`.
+Without the file the pending run is skipped, or, with `DOCUCONF_REQUIRE_CONFORMANCE=1`, notes that and passes.
 
 `tests/ConformanceExportTest.php` declares docuconf-go's export fixture (`conformance/export/fixture.yaml`) in
 [`tests/Fixtures/conformance_export.php`](tests/Fixtures/conformance_export.php), exports it, and compares it with
@@ -650,8 +672,8 @@ declarations.
 
 ## Not supported yet
 
-- Profiles and config-file overlays in the declaration API (contract-first mode has them), and `reload: watch` on
-  an overlay.
+- Profiles, config-file overlays, `requiredIf`, roles and fragments in the declaration API (contract-first mode has
+  them), and `reload: watch` on an overlay.
 - JKS keystores are checked by their integrity digest (password and corruption), not opened; PKCS#12 keystores are
   opened with OpenSSL, which rejects legacy ciphers such as RC2 unless its legacy provider is loaded.
 - A Symfony Flex recipe, so the bundle registers itself.

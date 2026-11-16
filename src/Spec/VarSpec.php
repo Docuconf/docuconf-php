@@ -32,6 +32,11 @@ final class VarSpec
     /** @var array{message: string, replacedBy?: string}|null */
     public ?array $deprecated = null;
 
+    /** Required only while this condition holds (SPEC §4.2.1); contract-first mode only. */
+    public ?RequiredIf $requiredIf = null;
+    /** @var list<string>|null the roles that use it (SPEC §4.9), every role when null; contract-first mode only */
+    public ?array $roles = null;
+
     public bool $hasDefault = false;
     public mixed $default = null;
 

@@ -25,6 +25,10 @@ final class FileSpec
     public ?string $group = null;
     /** @var array{message: string, replacedBy?: string}|null */
     public ?array $deprecated = null;
+    /** Required only while this condition holds (SPEC §4.2.1); contract-first mode only. */
+    public ?RequiredIf $requiredIf = null;
+    /** @var list<string>|null the roles that use it (SPEC §4.9), every role when null; contract-first mode only */
+    public ?array $roles = null;
 
     // config (json|yaml|toml) and keystore (pkcs12|jks)
     public ?string $format = null;
