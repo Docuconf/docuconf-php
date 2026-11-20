@@ -3,14 +3,27 @@
     "description": "Typed configuration contracts for PHP apps: declare env vars and files on top of vlucas/phpdotenv, validate them at boot, export a CUE contract for the platform.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["configuration", "environment", "dotenv", "env", "contract", "cue", "kubernetes", "laravel", "symfony", "validation"],
+    "keywords": [
+        "configuration",
+        "environment",
+        "dotenv",
+        "env",
+        "contract",
+        "cue",
+        "kubernetes",
+        "laravel",
+        "symfony",
+        "validation"
+    ],
     "homepage": "https://docuconf.dev/languages/laravel/",
     "support": {
         "issues": "https://github.com/docuconf/docuconf-php/issues",
         "source": "https://github.com/docuconf/docuconf-php"
     },
     "authors": [
-        {"name": "The docuconf authors"}
+        {
+            "name": "The docuconf authors"
+        }
     ],
     "require": {
         "php": "^8.2",
@@ -47,10 +60,14 @@
             "Docuconf\\Tests\\": "tests/"
         }
     },
-    "bin": ["bin/docuconf"],
+    "bin": [
+        "bin/docuconf"
+    ],
     "extra": {
         "laravel": {
-            "providers": ["Docuconf\\Laravel\\DocuconfServiceProvider"]
+            "providers": [
+                "Docuconf\\Laravel\\DocuconfServiceProvider"
+            ]
         }
     },
     "scripts": {
